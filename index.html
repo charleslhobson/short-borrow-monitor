@@ -1,0 +1,984 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Short borrow monitor</title>
+<meta name="description" content="Borrow fees and shares available to short for US stocks, from Interactive Brokers' public stock loan data.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #E8EDF2;
+    --surface: #F8FAFC;
+    --ink: #13233A;
+    --muted: #5A6A7F;
+    --rule: #CDD6E0;
+    --row-hover: #EEF3F8;
+    --up: #1C7650;
+    --down: #B3202D;
+    --heat-0: #2A8A8A;
+    --heat-1: #6E9A3A;
+    --heat-2: #C2860F;
+    --heat-3: #D35A22;
+    --heat-4: #C0263A;
+    --focus: #2F6FEB;
+    --font: "Archivo", "Segoe UI", system-ui, -apple-system, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0D1626;
+      --surface: #132035;
+      --ink: #E3E9F2;
+      --muted: #8B9DB5;
+      --rule: #22324A;
+      --row-hover: #18273F;
+      --up: #4CC38A;
+      --down: #FF6E7A;
+      --focus: #7AA7FF;
+      --heat-0: #3FB8B0;
+      --heat-1: #8CC157;
+      --heat-2: #F0B43C;
+      --heat-3: #FF8A4C;
+      --heat-4: #FF5C70;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    background: var(--bg); color: var(--ink);
+    font-family: var(--font); font-size: 15px; line-height: 1.45;
+    font-variant-numeric: tabular-nums;
+  }
+  .page { max-width: 1120px; margin: 0 auto; padding: 32px 24px 48px; }
+
+  header {
+    display: flex; flex-wrap: wrap; gap: 16px 32px;
+    align-items: flex-end; justify-content: space-between; margin-bottom: 28px;
+  }
+  h1 { font-size: 34px; line-height: 1.05; font-weight: 800; letter-spacing: -0.02em; margin: 0; }
+  .sub { margin: 6px 0 0; color: var(--muted); max-width: 60ch; }
+  h2 { font-size: 20px; font-weight: 700; margin: 0; letter-spacing: -0.01em; }
+  .section-head { display: flex; flex-wrap: wrap; gap: 4px 16px; align-items: baseline; justify-content: space-between; margin: 0 0 12px; }
+  .section-head p { margin: 0; color: var(--muted); font-size: 14px; }
+
+  .status {
+    display: flex; align-items: flex-start; gap: 10px; max-width: 440px;
+    padding: 10px 14px; background: var(--surface);
+    border: 1px solid var(--rule); border-radius: 10px; font-size: 14px;
+  }
+  .dot { flex: none; width: 10px; height: 10px; border-radius: 50%; margin-top: 5px; background: var(--heat-2); }
+  .status[data-state="ok"] .dot { background: var(--up); }
+  .status[data-state="error"] .dot { background: var(--down); }
+
+  .controls { display: flex; flex-wrap: wrap; gap: 12px 24px; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+  #addForm { display: flex; gap: 8px; flex: 1 1 360px; max-width: 520px; }
+  input {
+    flex: 1; min-width: 0; font: inherit; font-size: 16px; color: var(--ink);
+    background: var(--surface); border: 1px solid var(--rule); border-radius: 8px;
+    padding: 10px 12px; text-transform: uppercase;
+  }
+  input::placeholder { text-transform: none; color: var(--muted); }
+  button { font: inherit; cursor: pointer; }
+  .primary { background: var(--ink); color: var(--surface); border: 0; border-radius: 8px; padding: 10px 18px; font-weight: 600; }
+  .quiet { background: none; border: 0; color: var(--muted); padding: 6px 4px; text-decoration: underline; text-underline-offset: 3px; font-size: 13px; }
+  .quiet:hover { color: var(--ink); }
+  .meta { display: flex; flex-wrap: wrap; gap: 4px 18px; align-items: center; }
+  .form-error { color: var(--down); font-size: 13px; min-height: 18px; margin: -6px 0 8px; }
+  :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+  .tablewrap { position: relative; background: var(--surface); border: 1px solid var(--rule); border-radius: 12px; overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; }
+  #watch { min-width: 820px; }
+  #top { min-width: 620px; }
+  th, td { padding: 12px 14px; text-align: right; white-space: nowrap; vertical-align: middle; }
+  th:first-child, td:first-child { text-align: left; }
+  thead th { font-size: 13px; font-weight: 600; color: var(--muted); border-bottom: 1px solid var(--rule); }
+  thead th.sortable { padding: 0; }
+  thead th button { width: 100%; background: none; border: 0; color: inherit; font-weight: inherit; padding: 12px 14px; text-align: inherit; font-size: 13px; }
+  thead th button:hover { color: var(--ink); }
+  th[aria-sort="ascending"] button::after { content: " ▲"; font-size: 10px; }
+  th[aria-sort="descending"] button::after { content: " ▼"; font-size: 10px; }
+  tbody tr + tr td { border-top: 1px solid var(--rule); }
+  tbody tr:hover td { background: var(--row-hover); }
+
+  td.sym { position: sticky; left: 0; background: var(--surface); }
+  tbody tr:hover td.sym { background: var(--row-hover); }
+  .ticker { display: block; font-weight: 700; font-size: 16px; }
+  .name { display: block; font-size: 12px; color: var(--muted); max-width: 210px; overflow: hidden; text-overflow: ellipsis; }
+  td.price { font-weight: 600; font-size: 16px; }
+  .pos { color: var(--up); }
+  .neg { color: var(--down); }
+  .dim { color: var(--muted); }
+  .note { color: var(--muted); font-style: italic; text-align: left; white-space: normal; }
+
+  td.fee { min-width: 170px; }
+  .feecell { position: relative; display: block; padding: 3px 8px; border-radius: 5px; overflow: hidden; }
+  .feebar { position: absolute; inset: 0 auto 0 0; border-radius: 5px; opacity: 0.22; }
+  .feeval { position: relative; font-weight: 700; }
+
+  .chip { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 13px; font-weight: 600; border: 1px solid currentColor; }
+  .chip.available { color: var(--up); }
+  .chip.limited { color: var(--heat-3); }
+  .chip.none { color: var(--down); }
+
+  .remove { background: none; border: 0; color: var(--muted); font-size: 20px; line-height: 1; width: 32px; height: 32px; border-radius: 6px; }
+  .remove:hover { color: var(--down); background: var(--row-hover); }
+  .add {
+    background: none; border: 1px solid var(--rule); color: var(--ink); border-radius: 6px;
+    padding: 4px 12px; font-size: 13px; font-weight: 600;
+  }
+  .add:hover:not(:disabled) { border-color: var(--ink); }
+  .add:disabled { color: var(--muted); cursor: default; }
+
+  .empty { padding: 40px 20px; text-align: center; color: var(--muted); }
+  .empty strong { display: block; color: var(--ink); font-size: 17px; margin-bottom: 4px; }
+
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 18px; margin-top: 12px; font-size: 13px; color: var(--muted); }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .legend i { width: 14px; height: 10px; border-radius: 3px; display: inline-block; }
+
+  section + section { margin-top: 48px; }
+  footer { margin-top: 48px; padding-top: 18px; border-top: 1px solid var(--rule); color: var(--muted); font-size: 13px; max-width: 78ch; }
+  footer p { margin: 0 0 8px; }
+  footer a { color: inherit; }
+
+  .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  @media (max-width: 640px) {
+    .page { padding: 20px 14px 36px; }
+    h1 { font-size: 27px; }
+    .status { max-width: none; width: 100%; }
+  }
+
+  /* ---------- tabs ---------- */
+  .tabbar {
+    display: flex; align-items: flex-end; gap: 4px; margin: 4px 0 0;
+    border-bottom: 1px solid var(--rule); overflow-x: auto; scrollbar-width: thin;
+  }
+  .tab {
+    flex: none; background: none; border: 1px solid transparent; border-bottom: 0;
+    color: var(--muted); padding: 10px 16px; border-radius: 8px 8px 0 0;
+    font-weight: 600; font-size: 14px; margin-bottom: -1px;
+  }
+  .tab:hover { color: var(--ink); }
+  .tab[aria-selected="true"] {
+    color: var(--ink); background: var(--surface); border-color: var(--rule);
+    box-shadow: inset 0 3px 0 var(--ink);
+  }
+  .addtab {
+    flex: none; margin: 0 0 6px 8px; background: none; color: var(--ink);
+    border: 1px dashed var(--muted); border-radius: 8px; padding: 6px 14px;
+    font-weight: 600; font-size: 14px;
+  }
+  .addtab:hover { border-style: solid; }
+  .panel { padding-top: 16px; }
+  .toolbar { display: flex; flex-wrap: wrap; gap: 6px 18px; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+  .toolbar .hint { color: var(--muted); font-size: 13px; }
+  .toolbar .actions { display: flex; flex-wrap: wrap; gap: 4px 14px; }
+  #metricTable { width: auto; min-width: 100%; }
+  #metricTable td.wrap { white-space: normal; min-width: 160px; text-align: left; }
+  .loading { color: var(--muted); }
+
+  /* ---------- dialog ---------- */
+  dialog {
+    width: min(860px, calc(100vw - 24px)); max-height: calc(100vh - 32px);
+    padding: 0; border: 1px solid var(--rule); border-radius: 14px;
+    background: var(--surface); color: var(--ink);
+  }
+  dialog::backdrop { background: rgba(10, 20, 35, 0.45); }
+  .dlg { display: flex; flex-direction: column; max-height: calc(100vh - 34px); }
+  .dlg-head { display: flex; justify-content: space-between; align-items: center; padding: 18px 22px 12px; border-bottom: 1px solid var(--rule); }
+  .dlg-head h2 { font-size: 20px; }
+  .dlg-body { overflow-y: auto; padding: 18px 22px; }
+  .dlg-foot { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: flex-end; padding: 14px 22px; border-top: 1px solid var(--rule); }
+  .dlg-foot .count { margin-right: auto; color: var(--muted); font-size: 14px; }
+  .close { background: none; border: 0; font-size: 24px; color: var(--muted); width: 36px; height: 36px; border-radius: 8px; }
+  .close:hover { color: var(--ink); background: var(--row-hover); }
+  .dlg h3 { font-size: 15px; margin: 0 0 4px; }
+  .dlg .lead { margin: 0 0 12px; color: var(--muted); font-size: 14px; }
+  .presets { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 10px; margin-bottom: 26px; }
+  .preset {
+    text-align: left; background: var(--bg); border: 1px solid var(--rule); border-radius: 10px;
+    padding: 12px 14px; color: var(--ink);
+  }
+  .preset:hover { border-color: var(--ink); }
+  .preset strong { display: block; font-size: 15px; }
+  .preset span { display: block; font-size: 13px; color: var(--muted); margin-top: 2px; }
+  .preset em { display: block; font-style: normal; font-size: 12px; color: var(--muted); margin-top: 6px; }
+  .builder-fields { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 14px; }
+  .builder-fields label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; font-weight: 600; flex: 1 1 240px; }
+  .builder-fields input { text-transform: none; }
+  .group { border: 1px solid var(--rule); border-radius: 10px; padding: 10px 14px 12px; margin: 0 0 10px; }
+  .group legend { font-weight: 700; padding: 0 6px; }
+  .group .all { float: right; margin-top: -2px; }
+  .checks { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 2px 14px; clear: both; }
+  .checks label { display: flex; gap: 8px; align-items: center; font-size: 14px; padding: 4px 0; cursor: pointer; }
+  .checks input { width: 16px; height: 16px; flex: none; accent-color: var(--ink); }
+  .nomatch { color: var(--muted); font-size: 14px; }
+
+  .topnav { display: flex; gap: 4px; margin: -8px 0 18px; }
+  .topnav a { color: var(--muted); text-decoration: none; font-weight: 600; font-size: 14px; padding: 6px 12px; border-radius: 999px; border: 1px solid transparent; }
+  .topnav a:hover { color: var(--ink); }
+  .topnav a[aria-current="page"] { color: var(--ink); background: var(--surface); border-color: var(--rule); }
+</style>
+</head>
+<body>
+<div class="page">
+  <nav class="topnav" aria-label="Pages">
+    <a href="/" aria-current="page">Stocks</a>
+    <a href="/etf">ETF short screen</a>
+  </nav>
+  <header>
+    <div>
+      <h1>Short borrow monitor</h1>
+      <p class="sub">What it costs to short US stocks, how many shares are available to borrow, and any other metric you want to track alongside.</p>
+    </div>
+    <div class="status" id="status" data-state="loading" role="status" aria-live="polite">
+      <span class="dot" aria-hidden="true"></span>
+      <span id="statusText">Loading borrow data</span>
+    </div>
+  </header>
+
+  <section aria-labelledby="watchTitle">
+    <div class="section-head">
+      <h2 id="watchTitle">Your stocks</h2>
+      <p>Your stocks and tabs are saved in this browser only.</p>
+    </div>
+    <div class="controls">
+      <form id="addForm" autocomplete="off">
+        <label for="sym" class="sr-only">Ticker symbols</label>
+        <input id="sym" placeholder="Add tickers, e.g. GME, AMC" spellcheck="false">
+        <button class="primary" type="submit">Add ticker</button>
+      </form>
+      <div class="meta">
+        <button class="quiet" id="resetBtn" type="button">Reset stock list</button>
+      </div>
+    </div>
+    <div class="form-error" id="formError" role="alert"></div>
+
+    <div class="tabbar">
+      <div role="tablist" aria-label="Metric tabs" id="tablist" style="display:flex;gap:4px"></div>
+      <button class="addtab" id="addTabBtn" type="button">+ Add tab</button>
+    </div>
+
+    <!-- Borrow tab -->
+    <div class="panel" id="panel-borrow" role="tabpanel" aria-labelledby="tab-borrow">
+      <div class="toolbar">
+        <span class="hint">From Interactive Brokers' stock loan file.</span>
+        <div class="actions"><button class="quiet" id="csvBtn" type="button">Download CSV</button></div>
+      </div>
+      <div class="tablewrap">
+        <table id="watch">
+          <thead>
+            <tr>
+              <th class="sortable" data-key="symbol"><button type="button">Ticker</button></th>
+              <th class="sortable price-col" data-key="price"><button type="button">Price</button></th>
+              <th class="sortable price-col" data-key="change"><button type="button">Change</button></th>
+              <th class="sortable" data-key="shares"><button type="button">Available to short</button></th>
+              <th class="sortable" data-key="fee"><button type="button">Borrow fee / yr</button></th>
+              <th class="sortable" data-key="rebate"><button type="button">Rebate / yr</button></th>
+              <th class="sortable" data-key="availability"><button type="button">Availability</button></th>
+              <th><span class="sr-only">Remove</span></th>
+            </tr>
+          </thead>
+          <tbody id="watchBody"></tbody>
+        </table>
+        <div class="empty" id="empty" hidden>
+          <strong>Your list is empty</strong>
+          Add a ticker above, or pick one from the highest borrow fees below.
+        </div>
+      </div>
+      <div class="legend" aria-label="Borrow fee colors">
+        <span><i style="background:var(--heat-0)"></i>Under 1%</span>
+        <span><i style="background:var(--heat-1)"></i>1–5%</span>
+        <span><i style="background:var(--heat-2)"></i>5–20%</span>
+        <span><i style="background:var(--heat-3)"></i>20–50%</span>
+        <span><i style="background:var(--heat-4)"></i>50% and up</span>
+      </div>
+
+      <section aria-labelledby="topTitle" style="margin-top:44px">
+        <div class="section-head">
+          <h2 id="topTitle">Most expensive to borrow</h2>
+          <p>Stocks with at least 1,000 shares available, ranked by borrow fee.</p>
+        </div>
+        <div class="tablewrap">
+          <table id="top">
+            <thead>
+              <tr>
+                <th>Ticker</th><th>Borrow fee / yr</th><th>Available to short</th><th>Rebate / yr</th>
+                <th><span class="sr-only">Add to your list</span></th>
+              </tr>
+            </thead>
+            <tbody id="topBody"></tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+
+    <!-- Metric tabs (one shared panel, filled for the selected tab) -->
+    <div class="panel" id="panel-metric" role="tabpanel" hidden>
+      <div class="toolbar">
+        <span class="hint" id="metricHint" aria-live="polite"></span>
+        <div class="actions">
+          <button class="quiet" id="editTabBtn" type="button">Edit columns</button>
+          <button class="quiet" id="metricCsvBtn" type="button">Download CSV</button>
+          <button class="quiet" id="removeTabBtn" type="button">Remove tab</button>
+        </div>
+      </div>
+      <div class="tablewrap">
+        <table id="metricTable">
+          <thead id="metricHead"></thead>
+          <tbody id="metricBody"></tbody>
+        </table>
+        <div class="empty" id="metricEmpty" hidden>
+          <strong>No stocks to show</strong>
+          Add a ticker above and it appears in every tab.
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <p><strong>Availability:</strong> Available means 10,000 or more shares to lend. Limited means fewer than 10,000. None means no shares to lend right now, so a new short isn't possible.</p>
+    <p>Borrow fees, rebates and share counts come from Interactive Brokers' public stock loan file and refresh about every 15 minutes. Fees are yearly rates, charged daily. <span id="priceSource">Prices and all other metrics come from Yahoo Finance and may be delayed; company data refreshes every 15 minutes, performance every 30.</span></p>
+    <p>For information only. Not investment advice. The rate you're charged by your broker may differ.</p>
+  </footer>
+</div>
+
+<dialog id="tabDialog" aria-labelledby="dlgTitle">
+  <form method="dialog" class="dlg" id="dlgForm">
+    <div class="dlg-head">
+      <h2 id="dlgTitle">Add a tab</h2>
+      <button class="close" type="button" id="dlgClose" aria-label="Close">×</button>
+    </div>
+    <div class="dlg-body">
+      <div id="presetArea">
+        <h3>Ready-made tabs</h3>
+        <p class="lead">One click adds a tab with these columns for every stock in your list.</p>
+        <div class="presets" id="presets"></div>
+        <h3>Build your own</h3>
+        <p class="lead">Name a tab and pick any columns, mixing categories if you like.</p>
+      </div>
+      <div class="builder-fields">
+        <label>Tab name <input id="tabName" maxlength="30" placeholder="e.g. Squeeze watch"></label>
+        <label>Find a metric <input id="metricSearch" type="search" placeholder="e.g. margin, target, volume"></label>
+      </div>
+      <div id="groups"></div>
+      <p class="nomatch" id="noMatch" hidden>No metrics match that search.</p>
+    </div>
+    <div class="dlg-foot">
+      <span class="count" id="selCount">0 columns selected</span>
+      <button class="quiet" type="button" id="dlgCancel">Cancel</button>
+      <button class="primary" type="button" id="dlgSave">Create tab</button>
+    </div>
+  </form>
+</dialog>
+<script>
+const $ = (id) => document.getElementById(id);
+const STORE_KEY = "sbm.tickers.v1";
+const TABS_KEY = "sbm.tabs.v1";
+const ACTIVE_KEY = "sbm.activeTab.v1";
+const AVAIL = { available: "Available", limited: "Limited", none: "None" };
+const AVAIL_ORDER = { available: 0, limited: 1, none: 2 };
+
+let config = { default_tickers: [], prices_enabled: true };
+let catalog = [];                 // metric groups from the server
+const metricByKey = new Map();
+let perfKeys = new Set();
+let tickers = [];
+let rows = [];                    // borrow + price rows from /api/quotes
+let sortKey = null, sortDir = 1;
+const rowEls = new Map();
+
+let tabs = [];                    // [{id, name, preset, metrics: [keys]}]
+let activeTab = "borrow";
+let metricRows = new Map();       // symbol -> {data, pending, error}
+let mSortKey = null, mSortDir = 1;
+let metricTimer = null;
+
+// ---------- formatting ----------
+const fmt2 = (v) => v == null ? "–" : v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const pct = (v) => v == null ? "–" : `${v.toFixed(2)}%`;
+function compact(v) {
+  const a = Math.abs(v), sign = v < 0 ? "-" : "";
+  if (a >= 1e12) return sign + (a / 1e12).toFixed(2) + "T";
+  if (a >= 1e9) return sign + (a / 1e9).toFixed(2) + "B";
+  if (a >= 1e6) return sign + (a / 1e6).toFixed(a >= 1e7 ? 1 : 2) + "M";
+  if (a >= 1e3) return sign + (a / 1e3).toFixed(a >= 1e4 ? 0 : 1) + "K";
+  return sign + String(Math.round(a));
+}
+function shares(v, plus) {
+  if (v == null) return "–";
+  return compact(v) + (plus ? "+" : "");
+}
+const heat = (f) => f < 1 ? 0 : f < 5 ? 1 : f < 20 ? 2 : f < 50 ? 3 : 4;
+function normalize(t) {
+  const s = t.trim().toUpperCase().replace(/^\$/, "").replace(/ /g, ".");
+  return /^[A-Z0-9][A-Z0-9.\-]{0,9}$/.test(s) ? s : null;
+}
+const isNum = (v) => typeof v === "number" && isFinite(v);
+function fmtDate(v, ms) {
+  const d = new Date(ms ? v : v * 1000);
+  return isNaN(d) ? "–" : d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+}
+
+// Returns {text, cls} for a metric value.
+function formatMetric(m, v) {
+  if (v == null || v === "") return { text: "–", cls: "dim" };
+  const sign = (x) => (m.signed && x > 0 ? "+" : "");
+  const color = (x) => (m.signed ? (x > 0 ? "pos" : x < 0 ? "neg" : "") : "");
+  switch (m.fmt) {
+    case "money": return isNum(v) ? { text: "$" + fmt2(v) } : { text: "–", cls: "dim" };
+    case "bigmoney": return isNum(v) ? { text: (v < 0 ? "-$" : "$") + compact(Math.abs(v)) } : { text: "–", cls: "dim" };
+    case "compact": return isNum(v) ? { text: compact(v) } : { text: "–", cls: "dim" };
+    case "int": return isNum(v) ? { text: Math.round(v).toLocaleString() } : { text: "–", cls: "dim" };
+    case "num1": return isNum(v) ? { text: v.toFixed(1) } : { text: "–", cls: "dim" };
+    case "num2": return isNum(v) ? { text: fmt2(v) } : { text: "–", cls: "dim" };
+    case "ratio": return isNum(v) ? { text: v.toFixed(2) + "x" } : { text: "–", cls: "dim" };
+    case "pct": return isNum(v) ? { text: sign(v) + (v * 100).toFixed(2) + "%", cls: color(v) } : { text: "–", cls: "dim" };
+    case "pct100": return isNum(v) ? { text: sign(v) + v.toFixed(2) + "%", cls: color(v) } : { text: "–", cls: "dim" };
+    case "date": return isNum(v) ? { text: fmtDate(v, false) } : { text: "–", cls: "dim" };
+    case "date_ms": return isNum(v) ? { text: fmtDate(v, true) } : { text: "–", cls: "dim" };
+    case "rec": return { text: String(v).replace(/_/g, " ").replace(/^./, c => c.toUpperCase()) };
+    case "avail": return { text: AVAIL[v] || "–" };
+    default: return { text: String(v), wrap: String(v).length > 24 };
+  }
+}
+
+function feeCell(td, fee) {
+  td.className = "fee";
+  td.innerHTML = '<span class="feecell"><span class="feebar"></span><span class="feeval"></span></span>';
+  const bar = td.querySelector(".feebar"), val = td.querySelector(".feeval");
+  if (fee == null) { val.textContent = "–"; return; }
+  const h = heat(fee);
+  val.textContent = pct(fee);
+  val.style.color = `var(--heat-${h})`;
+  bar.style.background = `var(--heat-${h})`;
+  bar.style.width = `${Math.max(6, Math.min(100, Math.log10(fee + 1) / 2 * 100))}%`;
+}
+function tickerCell(td, sym, name) {
+  td.className = "sym";
+  td.textContent = "";
+  const a = document.createElement("span"); a.className = "ticker"; a.textContent = sym;
+  td.appendChild(a);
+  if (name) { const n = document.createElement("span"); n.className = "name"; n.textContent = name; n.title = name; td.appendChild(n); }
+}
+function chip(td, a) {
+  td.textContent = "";
+  if (!a) { td.textContent = "–"; return; }
+  const c = document.createElement("span"); c.className = "chip " + a; c.textContent = AVAIL[a];
+  td.appendChild(c);
+}
+function downloadCsv(name, head, lines) {
+  const q = (v) => v == null ? "" : `"${String(v).replace(/"/g, '""')}"`;
+  const text = [head.map(q).join(",")].concat(lines.map(l => l.map(q).join(","))).join("\n");
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([text], { type: "text/csv" }));
+  a.download = `${name}-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+// ---------- storage ----------
+function saveTickers() { try { localStorage.setItem(STORE_KEY, JSON.stringify(tickers)); } catch {} }
+function loadTickers() {
+  try { const t = JSON.parse(localStorage.getItem(STORE_KEY)); if (Array.isArray(t)) return t.filter(normalize); } catch {}
+  return [...config.default_tickers];
+}
+function saveTabs() {
+  try { localStorage.setItem(TABS_KEY, JSON.stringify(tabs)); localStorage.setItem(ACTIVE_KEY, activeTab); } catch {}
+}
+function loadTabs() {
+  try {
+    const t = JSON.parse(localStorage.getItem(TABS_KEY));
+    if (Array.isArray(t)) tabs = t.filter(x => x && x.id && Array.isArray(x.metrics))
+      .map(x => ({ ...x, metrics: x.metrics.filter(k => metricByKey.has(k)) }))
+      .filter(x => x.metrics.length);
+    const a = localStorage.getItem(ACTIVE_KEY);
+    activeTab = tabs.some(x => x.id === a) ? a : "borrow";
+  } catch { tabs = []; activeTab = "borrow"; }
+}
+
+// ---------- borrow tab ----------
+function sorted(list, key, dir) {
+  if (!key) return list;
+  return [...list].sort((a, b) => {
+    let x = a[key], y = b[key];
+    if (key === "availability") { x = AVAIL_ORDER[x]; y = AVAIL_ORDER[y]; }
+    if (x == null && y == null) return 0;
+    if (x == null) return 1;
+    if (y == null) return -1;
+    if (typeof x === "string" || typeof y === "string") return String(x).localeCompare(String(y)) * dir;
+    return (x < y ? -1 : x > y ? 1 : 0) * dir;
+  });
+}
+
+function renderWatch() {
+  const body = $("watchBody");
+  const byKey = new Map(rows.map(r => [r.symbol, r]));
+  const list = sorted(tickers.map(s => byKey.get(s) || { symbol: s, pending: true }), sortKey, sortDir);
+  const keep = new Set(tickers);
+  for (const [s, tr] of rowEls) if (!keep.has(s)) { tr.remove(); rowEls.delete(s); }
+
+  list.forEach((r, i) => {
+    let tr = rowEls.get(r.symbol);
+    if (!tr) { tr = document.createElement("tr"); rowEls.set(r.symbol, tr); }
+    tr.textContent = "";
+    const td = () => tr.appendChild(document.createElement("td"));
+    tickerCell(td(), r.symbol, r.name);
+
+    const span = config.prices_enabled ? 6 : 4;
+    if (r.pending || !r.listed) {
+      const n = td(); n.className = "note"; n.colSpan = span;
+      n.textContent = r.pending ? "Loading" : "Not in IBKR's borrow list. Check the ticker, or it may not be shortable at IBKR.";
+    } else {
+      if (config.prices_enabled) {
+        const p = td(); p.className = "price"; p.textContent = fmt2(r.price);
+        const c = td();
+        c.textContent = r.change == null ? "–" : `${r.change > 0 ? "+" : ""}${r.change.toFixed(2)}%`;
+        c.className = r.change > 0 ? "pos" : r.change < 0 ? "neg" : "dim";
+      }
+      const sh = td(); sh.textContent = shares(r.shares, r.plus);
+      if (r.shares != null) sh.title = `${r.shares.toLocaleString()}${r.plus ? "+" : ""} shares`;
+      feeCell(td(), r.fee);
+      const rb = td(); rb.className = "dim"; rb.textContent = pct(r.rebate);
+      chip(td(), r.availability);
+    }
+    const x = td();
+    const btn = document.createElement("button");
+    btn.className = "remove"; btn.type = "button"; btn.textContent = "×";
+    btn.setAttribute("aria-label", `Remove ${r.symbol}`);
+    btn.addEventListener("click", () => removeTicker(r.symbol));
+    x.appendChild(btn);
+    if (body.children[i] !== tr) body.insertBefore(tr, body.children[i] || null);
+  });
+
+  $("empty").hidden = tickers.length > 0;
+  $("watch").hidden = tickers.length === 0;
+  renderTopButtons();
+}
+
+function setStatus(b) {
+  $("status").dataset.state = b.state;
+  $("statusText").textContent =
+    b.state === "ok" ? `Borrow data updated ${b.as_of}` :
+    b.state === "error" ? b.text : "Loading borrow data";
+}
+
+async function refreshWatch() {
+  if (!tickers.length) { rows = []; renderWatch(); if (activeTab !== "borrow") renderMetricBody(); return; }
+  try {
+    const res = await fetch(`/api/quotes?symbols=${encodeURIComponent(tickers.join(","))}`, { cache: "no-store" });
+    const d = await res.json();
+    rows = d.rows;
+    setStatus(d.borrow);
+  } catch {
+    setStatus({ state: "error", text: "Can't reach the server. Retrying." });
+  }
+  renderWatch();
+  if (activeTab !== "borrow") renderMetricBody();
+}
+
+function addTickers(text) {
+  const good = text.split(/[,\s;]+/).filter(Boolean).map(normalize).filter(Boolean);
+  if (!good.length) return "Type a ticker symbol, like GME.";
+  let msg = "";
+  for (const s of good) if (!tickers.includes(s)) tickers.push(s);
+  if (tickers.length > 30) { tickers = tickers.slice(0, 30); msg = "Your list can hold up to 30 tickers."; }
+  saveTickers(); renderWatch(); refreshWatch();
+  if (activeTab !== "borrow") { renderMetricBody(); refreshMetrics(); }
+  return msg;
+}
+function removeTicker(sym) {
+  tickers = tickers.filter(t => t !== sym);
+  saveTickers(); renderWatch();
+  if (activeTab !== "borrow") renderMetricBody();
+}
+
+// ---------- most expensive ----------
+let topRows = [];
+function renderTop() {
+  const body = $("topBody");
+  body.textContent = "";
+  if (!topRows.length) {
+    const td = body.insertRow().insertCell(); td.colSpan = 5; td.className = "note";
+    td.textContent = "Loading borrow data";
+    return;
+  }
+  for (const r of topRows) {
+    const tr = body.insertRow();
+    tickerCell(tr.insertCell(), r.symbol, r.name);
+    feeCell(tr.insertCell(), r.fee);
+    tr.insertCell().textContent = shares(r.shares, r.plus);
+    const rb = tr.insertCell(); rb.className = "dim"; rb.textContent = pct(r.rebate);
+    const btn = document.createElement("button");
+    btn.type = "button"; btn.className = "add"; btn.dataset.sym = r.symbol;
+    btn.addEventListener("click", () => addTickers(r.symbol));
+    tr.insertCell().appendChild(btn);
+  }
+  renderTopButtons();
+}
+function renderTopButtons() {
+  document.querySelectorAll("#topBody .add").forEach(b => {
+    const inList = tickers.includes(b.dataset.sym);
+    b.disabled = inList;
+    b.textContent = inList ? "In your list" : "Add";
+    b.setAttribute("aria-label", inList ? `${b.dataset.sym} is in your list` : `Add ${b.dataset.sym} to your list`);
+  });
+}
+async function refreshTop() {
+  try {
+    const d = await (await fetch("/api/top", { cache: "no-store" })).json();
+    topRows = d.rows; setStatus(d.borrow);
+  } catch {}
+  renderTop();
+}
+
+// ---------- tab bar ----------
+function renderTabs() {
+  const list = $("tablist");
+  list.textContent = "";
+  const all = [{ id: "borrow", name: "Borrow" }, ...tabs];
+  for (const t of all) {
+    const b = document.createElement("button");
+    b.type = "button"; b.className = "tab"; b.setAttribute("role", "tab"); b.id = "tab-" + t.id;
+    b.textContent = t.name;
+    b.setAttribute("aria-selected", String(t.id === activeTab));
+    b.setAttribute("aria-controls", t.id === "borrow" ? "panel-borrow" : "panel-metric");
+    b.tabIndex = t.id === activeTab ? 0 : -1;
+    b.addEventListener("click", () => selectTab(t.id));
+    b.addEventListener("keydown", (e) => {
+      if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
+      const i = all.findIndex(x => x.id === t.id);
+      const next = all[(i + (e.key === "ArrowRight" ? 1 : all.length - 1)) % all.length];
+      selectTab(next.id);
+      $("tab-" + next.id).focus();
+    });
+    list.appendChild(b);
+  }
+  $("addTabBtn").hidden = !catalog.length;
+}
+
+function selectTab(id) {
+  activeTab = id;
+  saveTabs();
+  renderTabs();
+  const isBorrow = id === "borrow";
+  $("panel-borrow").hidden = !isBorrow;
+  $("panel-metric").hidden = isBorrow;
+  clearTimeout(metricTimer);
+  if (!isBorrow) {
+    $("panel-metric").setAttribute("aria-labelledby", "tab-" + id);
+    mSortKey = null;
+    renderMetricHead();
+    renderMetricBody();
+    refreshMetrics();
+  }
+}
+
+const currentTab = () => tabs.find(t => t.id === activeTab);
+
+// ---------- metric tabs ----------
+function borrowValue(sym, key) {
+  const r = rows.find(x => x.symbol === sym);
+  if (!r || !r.listed) return null;
+  return { ibkr_fee: r.fee, ibkr_rebate: r.rebate, ibkr_shares: r.shares, ibkr_avail: r.availability }[key];
+}
+function valueFor(sym, key) {
+  if (key.startsWith("ibkr_")) return borrowValue(sym, key);
+  const m = metricRows.get(sym);
+  return m && m.data ? m.data[key] : null;
+}
+
+function renderMetricHead() {
+  const tab = currentTab();
+  const head = $("metricHead");
+  head.textContent = "";
+  if (!tab) return;
+  const tr = head.insertRow();
+  const cols = [{ key: "symbol", label: "Ticker" }, ...tab.metrics.map(k => metricByKey.get(k))];
+  for (const c of cols) {
+    const th = document.createElement("th");
+    th.className = "sortable";
+    th.dataset.key = c.key;
+    if (mSortKey === c.key) th.setAttribute("aria-sort", mSortDir === 1 ? "ascending" : "descending");
+    const b = document.createElement("button");
+    b.type = "button"; b.textContent = c.label;
+    b.addEventListener("click", () => {
+      if (mSortKey === c.key) mSortDir = -mSortDir;
+      else { mSortKey = c.key; mSortDir = (c.key === "symbol" || (metricByKey.get(c.key) || {}).fmt === "text") ? 1 : -1; }
+      renderMetricHead(); renderMetricBody();
+      head.querySelector(`th[data-key="${c.key}"] button`).focus();
+    });
+    th.appendChild(b);
+    tr.appendChild(th);
+  }
+}
+
+function renderMetricBody() {
+  const tab = currentTab();
+  const body = $("metricBody");
+  body.textContent = "";
+  if (!tab) return;
+  $("metricEmpty").hidden = tickers.length > 0;
+  $("metricTable").hidden = tickers.length === 0;
+
+  let list = tickers.map(s => {
+    const o = { symbol: s };
+    for (const k of tab.metrics) o[k] = valueFor(s, k);
+    return o;
+  });
+  if (mSortKey) list = sorted(list, mSortKey, mSortDir);
+
+  const onlyBorrow = tab.metrics.every(k => k.startsWith("ibkr_"));
+  for (const r of list) {
+    const tr = body.insertRow();
+    const info = metricRows.get(r.symbol);
+    const quote = rows.find(x => x.symbol === r.symbol);
+    const name = (info && info.data && info.data.longName) || (quote && quote.name);
+    tickerCell(tr.insertCell(), r.symbol, name);
+
+    if (!onlyBorrow && info && info.error) {
+      const td = tr.insertCell(); td.colSpan = tab.metrics.length; td.className = "note";
+      td.textContent = info.error === "Yahoo has no data for this ticker"
+        ? "Yahoo Finance has no data for this ticker." : info.error + ". Trying again shortly.";
+      continue;
+    }
+    const loading = !onlyBorrow && (!info || info.pending);
+    for (const k of tab.metrics) {
+      const m = metricByKey.get(k);
+      const td = tr.insertCell();
+      if (loading && !k.startsWith("ibkr_")) { td.textContent = "…"; td.className = "loading"; continue; }
+      if (m.fmt === "avail") { chip(td, r[k]); continue; }
+      const f = formatMetric(m, r[k]);
+      td.textContent = f.text;
+      td.className = [f.cls || "", f.wrap ? "wrap" : ""].join(" ").trim();
+      if (m.fmt === "text") td.style.textAlign = "left";
+    }
+  }
+}
+
+async function refreshMetrics() {
+  clearTimeout(metricTimer);
+  const tab = currentTab();
+  if (!tab) return;
+  const yahooKeys = tab.metrics.filter(k => !k.startsWith("ibkr_"));
+  if (!yahooKeys.length || !tickers.length) {
+    $("metricHint").textContent = "From Interactive Brokers' stock loan file.";
+    renderMetricBody();
+    return;
+  }
+  const needPerf = yahooKeys.some(k => perfKeys.has(k));
+  const missing = tickers.filter(s => !metricRows.has(s)).length;
+  if (missing) $("metricHint").textContent = `Loading ${missing} stock${missing > 1 ? "s" : ""} from Yahoo Finance…`;
+  let pending = 0;
+  try {
+    const url = `/api/metrics?symbols=${encodeURIComponent(tickers.join(","))}&perf=${needPerf ? 1 : 0}`;
+    const d = await (await fetch(url, { cache: "no-store" })).json();
+    for (const r of d.rows) metricRows.set(r.symbol, r);
+    pending = d.pending;
+    $("metricHint").textContent = pending
+      ? `Still loading ${pending} stock${pending > 1 ? "s" : ""} from Yahoo Finance…`
+      : "From Yahoo Finance. Values may be delayed.";
+  } catch {
+    $("metricHint").textContent = "Can't reach the server. Retrying.";
+    pending = 1;
+  }
+  if (activeTab === tab.id) {
+    renderMetricBody();
+    metricTimer = setTimeout(refreshMetrics, pending ? 4000 : 60000);
+  }
+}
+
+// ---------- add / edit tab dialog ----------
+let editingId = null;
+const dlg = $("tabDialog");
+
+function buildDialog() {
+  const presets = $("presets");
+  presets.textContent = "";
+  for (const g of catalog.filter(g => g.preset)) {
+    const b = document.createElement("button");
+    b.type = "button"; b.className = "preset";
+    b.innerHTML = "<strong></strong><span></span><em></em>";
+    b.querySelector("strong").textContent = g.label;
+    b.querySelector("span").textContent = g.desc;
+    b.querySelector("em").textContent = `${g.metrics.length} columns`;
+    b.addEventListener("click", () => addPreset(g));
+    presets.appendChild(b);
+  }
+
+  const groups = $("groups");
+  groups.textContent = "";
+  for (const g of catalog) {
+    const fs = document.createElement("fieldset");
+    fs.className = "group"; fs.dataset.group = g.id;
+    const lg = document.createElement("legend"); lg.textContent = g.label;
+    const all = document.createElement("button");
+    all.type = "button"; all.className = "quiet all"; all.textContent = "Select all";
+    all.addEventListener("click", () => {
+      const boxes = [...fs.querySelectorAll("label:not([hidden]) input")];
+      const on = boxes.some(x => !x.checked);
+      boxes.forEach(x => x.checked = on);
+      updateCount();
+    });
+    const checks = document.createElement("div"); checks.className = "checks";
+    for (const m of g.metrics) {
+      const l = document.createElement("label");
+      const cb = document.createElement("input");
+      cb.type = "checkbox"; cb.value = m.key;
+      cb.addEventListener("change", updateCount);
+      l.append(cb, m.label);
+      l.dataset.search = (m.label + " " + g.label).toLowerCase();
+      checks.appendChild(l);
+    }
+    fs.append(lg, all, checks);
+    groups.appendChild(fs);
+  }
+}
+
+function selectedKeys() { return [...$("groups").querySelectorAll("input:checked")].map(x => x.value); }
+function updateCount() {
+  const n = selectedKeys().length;
+  $("selCount").textContent = `${n} column${n === 1 ? "" : "s"} selected`;
+}
+function filterMetrics() {
+  const q = $("metricSearch").value.trim().toLowerCase();
+  let shown = 0;
+  $("groups").querySelectorAll("fieldset").forEach(fs => {
+    let any = false;
+    fs.querySelectorAll("label").forEach(l => {
+      const hit = !q || l.dataset.search.includes(q);
+      l.hidden = !hit; any = any || hit; shown += hit;
+    });
+    fs.hidden = !any;
+  });
+  $("noMatch").hidden = shown > 0;
+}
+
+function openDialog(tab) {
+  editingId = tab ? tab.id : null;
+  $("dlgTitle").textContent = tab ? `Edit "${tab.name}"` : "Add a tab";
+  $("presetArea").hidden = !!tab;
+  $("dlgSave").textContent = tab ? "Save changes" : "Create tab";
+  $("tabName").value = tab ? tab.name : "";
+  $("metricSearch").value = "";
+  const chosen = new Set(tab ? tab.metrics : []);
+  $("groups").querySelectorAll("input").forEach(cb => cb.checked = chosen.has(cb.value));
+  filterMetrics(); updateCount();
+  dlg.showModal();
+  (tab ? $("tabName") : dlg.querySelector(".preset") || $("tabName")).focus();
+}
+function closeDialog() { dlg.close(); }
+
+function newId() { return "t" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
+
+function addPreset(g) {
+  const existing = tabs.find(t => t.preset === g.id);
+  closeDialog();
+  if (existing) { selectTab(existing.id); return; }
+  const t = { id: newId(), name: g.label, preset: g.id, metrics: g.metrics.map(m => m.key) };
+  tabs.push(t);
+  selectTab(t.id);
+}
+
+function saveDialog() {
+  const keys = selectedKeys();
+  if (!keys.length) { $("selCount").textContent = "Pick at least one column."; return; }
+  const name = $("tabName").value.trim() || "My metrics";
+  if (editingId) {
+    const t = tabs.find(x => x.id === editingId);
+    t.name = name; t.metrics = keys; t.preset = null;
+    closeDialog();
+    selectTab(t.id);
+  } else {
+    const t = { id: newId(), name, preset: null, metrics: keys };
+    tabs.push(t);
+    closeDialog();
+    selectTab(t.id);
+  }
+}
+
+// ---------- events ----------
+$("addForm").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const msg = addTickers($("sym").value);
+  $("formError").textContent = msg;
+  if (!msg) $("sym").value = "";
+  $("sym").focus();
+});
+$("resetBtn").addEventListener("click", () => {
+  tickers = [...config.default_tickers]; saveTickers(); renderWatch(); refreshWatch();
+  if (activeTab !== "borrow") { renderMetricBody(); refreshMetrics(); }
+});
+document.querySelectorAll("#watch th.sortable").forEach(th => {
+  th.querySelector("button").addEventListener("click", () => {
+    const key = th.dataset.key;
+    if (sortKey === key) sortDir = -sortDir; else { sortKey = key; sortDir = (key === "symbol" || key === "availability") ? 1 : -1; }
+    document.querySelectorAll("#watch th").forEach(h => h.removeAttribute("aria-sort"));
+    th.setAttribute("aria-sort", sortDir === 1 ? "ascending" : "descending");
+    renderWatch();
+  });
+});
+$("csvBtn").addEventListener("click", () => {
+  downloadCsv("short-borrow",
+    ["Ticker", "Name", "Price", "Change %", "Shares available to short", "Borrow fee % / yr", "Rebate % / yr", "Availability"],
+    rows.filter(r => r.listed).map(r => [r.symbol, r.name, r.price, r.change, r.shares, r.fee, r.rebate, AVAIL[r.availability]]));
+});
+$("metricCsvBtn").addEventListener("click", () => {
+  const tab = currentTab(); if (!tab) return;
+  const head = ["Ticker", ...tab.metrics.map(k => metricByKey.get(k).label)];
+  const lines = tickers.map(s => [s, ...tab.metrics.map(k => {
+    const m = metricByKey.get(k), v = valueFor(s, k);
+    if (v == null) return "";
+    if (m.fmt === "date" || m.fmt === "date_ms") return formatMetric(m, v).text;
+    if (m.fmt === "avail") return AVAIL[v];
+    return v;
+  })]);
+  downloadCsv(tab.name.toLowerCase().replace(/[^a-z0-9]+/g, "-"), head, lines);
+});
+$("addTabBtn").addEventListener("click", () => openDialog(null));
+$("editTabBtn").addEventListener("click", () => { const t = currentTab(); if (t) openDialog(t); });
+$("removeTabBtn").addEventListener("click", () => {
+  const t = currentTab(); if (!t) return;
+  if (!confirm(`Remove the "${t.name}" tab?`)) return;
+  tabs = tabs.filter(x => x.id !== t.id);
+  selectTab("borrow");
+  $("tab-borrow").focus();
+});
+$("dlgClose").addEventListener("click", closeDialog);
+$("dlgCancel").addEventListener("click", closeDialog);
+$("dlgSave").addEventListener("click", saveDialog);
+$("metricSearch").addEventListener("input", filterMetrics);
+$("dlgForm").addEventListener("submit", (e) => { e.preventDefault(); saveDialog(); });
+dlg.addEventListener("click", (e) => { if (e.target === dlg) closeDialog(); });
+
+// ---------- start ----------
+(async function start() {
+  try { config = await (await fetch("/api/config")).json(); } catch {}
+  try {
+    const c = await (await fetch("/api/catalog")).json();
+    catalog = c.groups || [];
+  } catch {}
+  for (const g of catalog) for (const m of g.metrics) metricByKey.set(m.key, m);
+  perfKeys = new Set((catalog.find(g => g.id === "performance") || { metrics: [] }).metrics.map(m => m.key));
+
+  if (!config.prices_enabled) {
+    document.querySelectorAll(".price-col").forEach(el => el.remove());
+    $("priceSource").textContent = "";
+  }
+  tickers = loadTickers();
+  loadTabs();
+  buildDialog();
+  renderWatch();
+  renderTop();
+  selectTab(activeTab);
+  refreshWatch();
+  refreshTop();
+  setInterval(refreshWatch, 30000);
+  setInterval(refreshTop, 5 * 60000);
+})();
+</script>
+</body>
+</html>

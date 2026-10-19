@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: short-borrow-monitor
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python app.py
+    healthCheckPath: /healthz
+    envVars:
+      - key: SHOW_PRICES
+        value: "on"
+      - key: DEFAULT_TICKERS
+        value: AAPL,TSLA,GME,AMC,BYND
+      - key: DEFAULT_ETFS
+        value: TSLL,NVDL,CONL,MSTU,SOXL
+      - key: GC_RATE
+        value: "0.25"
+      - key: SEC_USER_AGENT
+        sync: false

@@ -1,0 +1,662 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ETF short screen</title>
+<meta name="description" content="Quoted borrow fees for ETFs compared with the fee their history could absorb and the fee their holdings imply.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #E8EDF2;
+    --surface: #F8FAFC;
+    --ink: #13233A;
+    --muted: #5A6A7F;
+    --rule: #CDD6E0;
+    --row-hover: #EEF3F8;
+    --up: #1C7650;
+    --down: #B3202D;
+    --heat-0: #2A8A8A;
+    --heat-1: #6E9A3A;
+    --heat-2: #C2860F;
+    --heat-3: #D35A22;
+    --heat-4: #C0263A;
+    --focus: #2F6FEB;
+    --font: "Archivo", "Segoe UI", system-ui, -apple-system, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0D1626;
+      --surface: #132035;
+      --ink: #E3E9F2;
+      --muted: #8B9DB5;
+      --rule: #22324A;
+      --row-hover: #18273F;
+      --up: #4CC38A;
+      --down: #FF6E7A;
+      --focus: #7AA7FF;
+      --heat-0: #3FB8B0;
+      --heat-1: #8CC157;
+      --heat-2: #F0B43C;
+      --heat-3: #FF8A4C;
+      --heat-4: #FF5C70;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    background: var(--bg); color: var(--ink);
+    font-family: var(--font); font-size: 15px; line-height: 1.45;
+    font-variant-numeric: tabular-nums;
+  }
+  .page { max-width: 1120px; margin: 0 auto; padding: 32px 24px 48px; }
+
+  header {
+    display: flex; flex-wrap: wrap; gap: 16px 32px;
+    align-items: flex-end; justify-content: space-between; margin-bottom: 28px;
+  }
+  h1 { font-size: 34px; line-height: 1.05; font-weight: 800; letter-spacing: -0.02em; margin: 0; }
+  .sub { margin: 6px 0 0; color: var(--muted); max-width: 60ch; }
+  h2 { font-size: 20px; font-weight: 700; margin: 0; letter-spacing: -0.01em; }
+  .section-head { display: flex; flex-wrap: wrap; gap: 4px 16px; align-items: baseline; justify-content: space-between; margin: 0 0 12px; }
+  .section-head p { margin: 0; color: var(--muted); font-size: 14px; }
+
+  .status {
+    display: flex; align-items: flex-start; gap: 10px; max-width: 440px;
+    padding: 10px 14px; background: var(--surface);
+    border: 1px solid var(--rule); border-radius: 10px; font-size: 14px;
+  }
+  .dot { flex: none; width: 10px; height: 10px; border-radius: 50%; margin-top: 5px; background: var(--heat-2); }
+  .status[data-state="ok"] .dot { background: var(--up); }
+  .status[data-state="error"] .dot { background: var(--down); }
+
+  .controls { display: flex; flex-wrap: wrap; gap: 12px 24px; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+  #addForm { display: flex; gap: 8px; flex: 1 1 360px; max-width: 520px; }
+  input {
+    flex: 1; min-width: 0; font: inherit; font-size: 16px; color: var(--ink);
+    background: var(--surface); border: 1px solid var(--rule); border-radius: 8px;
+    padding: 10px 12px; text-transform: uppercase;
+  }
+  input::placeholder { text-transform: none; color: var(--muted); }
+  button { font: inherit; cursor: pointer; }
+  .primary { background: var(--ink); color: var(--surface); border: 0; border-radius: 8px; padding: 10px 18px; font-weight: 600; }
+  .quiet { background: none; border: 0; color: var(--muted); padding: 6px 4px; text-decoration: underline; text-underline-offset: 3px; font-size: 13px; }
+  .quiet:hover { color: var(--ink); }
+  .meta { display: flex; flex-wrap: wrap; gap: 4px 18px; align-items: center; }
+  .form-error { color: var(--down); font-size: 13px; min-height: 18px; margin: -6px 0 8px; }
+  :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+  .tablewrap { position: relative; background: var(--surface); border: 1px solid var(--rule); border-radius: 12px; overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; }
+  #watch { min-width: 820px; }
+  #top { min-width: 620px; }
+  th, td { padding: 12px 14px; text-align: right; white-space: nowrap; vertical-align: middle; }
+  th:first-child, td:first-child { text-align: left; }
+  thead th { font-size: 13px; font-weight: 600; color: var(--muted); border-bottom: 1px solid var(--rule); }
+  thead th.sortable { padding: 0; }
+  thead th button { width: 100%; background: none; border: 0; color: inherit; font-weight: inherit; padding: 12px 14px; text-align: inherit; font-size: 13px; }
+  thead th button:hover { color: var(--ink); }
+  th[aria-sort="ascending"] button::after { content: " ▲"; font-size: 10px; }
+  th[aria-sort="descending"] button::after { content: " ▼"; font-size: 10px; }
+  tbody tr + tr td { border-top: 1px solid var(--rule); }
+  tbody tr:hover td { background: var(--row-hover); }
+
+  td.sym { position: sticky; left: 0; background: var(--surface); }
+  tbody tr:hover td.sym { background: var(--row-hover); }
+  .ticker { display: block; font-weight: 700; font-size: 16px; }
+  .name { display: block; font-size: 12px; color: var(--muted); max-width: 210px; overflow: hidden; text-overflow: ellipsis; }
+  td.price { font-weight: 600; font-size: 16px; }
+  .pos { color: var(--up); }
+  .neg { color: var(--down); }
+  .dim { color: var(--muted); }
+  .note { color: var(--muted); font-style: italic; text-align: left; white-space: normal; }
+
+  td.fee { min-width: 170px; }
+  .feecell { position: relative; display: block; padding: 3px 8px; border-radius: 5px; overflow: hidden; }
+  .feebar { position: absolute; inset: 0 auto 0 0; border-radius: 5px; opacity: 0.22; }
+  .feeval { position: relative; font-weight: 700; }
+
+  .chip { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 13px; font-weight: 600; border: 1px solid currentColor; }
+  .chip.available { color: var(--up); }
+  .chip.limited { color: var(--heat-3); }
+  .chip.none { color: var(--down); }
+
+  .remove { background: none; border: 0; color: var(--muted); font-size: 20px; line-height: 1; width: 32px; height: 32px; border-radius: 6px; }
+  .remove:hover { color: var(--down); background: var(--row-hover); }
+  .add {
+    background: none; border: 1px solid var(--rule); color: var(--ink); border-radius: 6px;
+    padding: 4px 12px; font-size: 13px; font-weight: 600;
+  }
+  .add:hover:not(:disabled) { border-color: var(--ink); }
+  .add:disabled { color: var(--muted); cursor: default; }
+
+  .empty { padding: 40px 20px; text-align: center; color: var(--muted); }
+  .empty strong { display: block; color: var(--ink); font-size: 17px; margin-bottom: 4px; }
+
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 18px; margin-top: 12px; font-size: 13px; color: var(--muted); }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .legend i { width: 14px; height: 10px; border-radius: 3px; display: inline-block; }
+
+  section + section { margin-top: 48px; }
+  footer { margin-top: 48px; padding-top: 18px; border-top: 1px solid var(--rule); color: var(--muted); font-size: 13px; max-width: 78ch; }
+  footer p { margin: 0 0 8px; }
+  footer a { color: inherit; }
+
+  .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  @media (max-width: 640px) {
+    .page { padding: 20px 14px 36px; }
+    h1 { font-size: 27px; }
+    .status { max-width: none; width: 100%; }
+  }
+
+  
+  /* ---------- shared nav ---------- */
+  .topnav { display: flex; gap: 4px; margin: -8px 0 18px; }
+  .topnav a {
+    color: var(--muted); text-decoration: none; font-weight: 600; font-size: 14px;
+    padding: 6px 12px; border-radius: 999px; border: 1px solid transparent;
+  }
+  .topnav a:hover { color: var(--ink); }
+  .topnav a[aria-current="page"] { color: var(--ink); background: var(--surface); border-color: var(--rule); }
+
+  /* ---------- ETF page ---------- */
+  .settings { display: flex; flex-wrap: wrap; gap: 10px 24px; align-items: center; margin: 4px 0 16px; font-size: 14px; }
+  .settings label { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font-weight: 600; }
+  .settings input[type=number] { width: 88px; text-transform: none; padding: 7px 10px; font-size: 15px; }
+  .seg { display: inline-flex; border: 1px solid var(--rule); border-radius: 8px; overflow: hidden; background: var(--surface); }
+  .seg button { background: none; border: 0; padding: 7px 12px; color: var(--muted); font-weight: 600; font-size: 14px; }
+  .seg button + button { border-left: 1px solid var(--rule); }
+  .seg button[aria-pressed="true"] { background: var(--ink); color: var(--surface); }
+  .page { max-width: 1300px; }
+  #etfTable { min-width: 1040px; }
+  #etfTable thead th { white-space: normal; vertical-align: bottom; }
+  #etfTable thead th.sortable button { line-height: 1.25; }
+  #etfTable td.verdict-cell { white-space: normal; min-width: 128px; }
+  .headroom { white-space: nowrap; }
+  #etfTable .mini th, #etfTable .mini td { padding: 5px 8px; }
+  #etfTable thead th.sortable { min-width: 80px; }
+  #etfTable td.nowrap { white-space: nowrap; }
+  #etfTable th, #etfTable td { padding-left: 9px; padding-right: 9px; }
+  #etfTable thead th.sortable button { padding: 12px 9px; }
+  #etfTable td.fee { min-width: 112px; }
+  #etfTable thead th:first-child { position: sticky; left: 0; background: var(--surface); z-index: 1; }
+  #etfTable td.sym { z-index: 1; }
+  th .sub2 { display: block; font-weight: 500; font-size: 11px; }
+  td.sym button.expand {
+    background: none; border: 0; color: inherit; padding: 0; text-align: left; display: flex; gap: 8px; align-items: flex-start;
+  }
+  td.sym .chev { color: var(--muted); font-size: 12px; margin-top: 4px; transition: transform .15s; }
+  button.expand[aria-expanded="true"] .chev { transform: rotate(90deg); }
+  .verdict { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 13px; font-weight: 600; border: 1px solid currentColor; }
+  .verdict.go { color: var(--up); }
+  .verdict.meh { color: var(--heat-3); }
+  .verdict.no { color: var(--down); }
+  .headroom { display: block; font-size: 12px; color: var(--muted); margin-top: 3px; }
+  .mis.rich { color: var(--down); font-weight: 700; }
+  .mis.cheap { color: var(--up); font-weight: 700; }
+  tr.detail td { background: var(--bg); white-space: normal; text-align: left; padding: 18px 20px 22px; }
+  tr.detail:hover td { background: var(--bg); }
+  .detail-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 18px 32px; }
+  .detail h3 { font-size: 15px; margin: 0 0 8px; }
+  .kv { display: grid; grid-template-columns: 1fr auto; gap: 4px 16px; font-size: 14px; margin: 0; }
+  .kv dt { color: var(--muted); }
+  .kv dd { margin: 0; text-align: right; font-weight: 600; }
+  .kv .sep { grid-column: 1 / -1; border-top: 1px solid var(--rule); margin: 4px 0; }
+  .mini { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 8px; }
+  .mini th, .mini td { padding: 5px 8px; border-top: 1px solid var(--rule); text-align: right; white-space: nowrap; background: none !important; }
+  .mini th { border-top: 0; color: var(--muted); font-weight: 600; }
+  .mini th:first-child, .mini td:first-child { text-align: left; white-space: normal; }
+  .note-line { font-size: 13px; color: var(--muted); margin: 8px 0 0; }
+  .method { margin-top: 44px; max-width: 80ch; font-size: 14px; }
+  .method h2 { margin-bottom: 8px; }
+  .method p, .method li { color: var(--ink); }
+  .method code { font-size: 13px; background: var(--surface); border: 1px solid var(--rule); border-radius: 4px; padding: 1px 5px; }
+</style>
+</head>
+<body>
+<div class="page">
+  <nav class="topnav" aria-label="Pages">
+    <a href="/">Stocks</a>
+    <a href="/etf" aria-current="page">ETF short screen</a>
+  </nav>
+  <header>
+    <div>
+      <h1>ETF short screen</h1>
+      <p class="sub">Quoted borrow cost for each ETF, the borrow fee its history could have absorbed, and what its holdings say the fee should be.</p>
+    </div>
+    <div class="status" id="status" data-state="loading" role="status" aria-live="polite">
+      <span class="dot" aria-hidden="true"></span>
+      <span id="statusText">Loading borrow data</span>
+    </div>
+  </header>
+
+  <div class="controls">
+    <form id="addForm" autocomplete="off">
+      <label for="sym" class="sr-only">ETF tickers</label>
+      <input id="sym" placeholder="Add ETFs, e.g. TSLL, NVDL (paste a whole list)" spellcheck="false">
+      <button class="primary" type="submit">Add ETFs</button>
+    </form>
+    <div class="meta">
+      <button class="quiet" id="csvBtn" type="button">Download CSV</button>
+      <button class="quiet" id="clearBtn" type="button">Clear list</button>
+      <button class="quiet" id="resetBtn" type="button">Reset to defaults</button>
+    </div>
+  </div>
+  <div class="form-error" id="formError" role="alert"></div>
+
+  <div class="settings">
+    <span class="seg" role="group" aria-label="History window">
+      <button type="button" data-win="inception" aria-pressed="true">Since inception</button>
+      <button type="button" data-win="3y" aria-pressed="false">3 years</button>
+      <button type="button" data-win="1y" aria-pressed="false">1 year</button>
+    </span>
+    <label for="gc">Fee for unmatched holdings
+      <input id="gc" type="number" min="0" max="100" step="0.05" inputmode="decimal"> % / yr
+    </label>
+    <span class="hint" id="loadHint" aria-live="polite" style="color:var(--muted);font-size:13px"></span>
+  </div>
+
+  <div class="tablewrap">
+    <table id="etfTable">
+      <thead>
+        <tr>
+          <th class="sortable" data-key="symbol"><button type="button">ETF</button></th>
+          <th class="sortable" data-key="aum"><button type="button">AUM</button></th>
+          <th class="sortable" data-key="fee"><button type="button">Quoted fee<span class="sub2">IBKR, % / yr</span></button></th>
+          <th class="sortable" data-key="shares"><button type="button">Available</button></th>
+          <th class="sortable" data-key="theo"><button type="button">Theoretical<span class="sub2">from holdings</span></button></th>
+          <th class="sortable" data-key="mis"><button type="button">Gap<span class="sub2">quoted − theo, pts</span></button></th>
+          <th class="sortable" data-key="etf_ann"><button type="button">ETF return<span class="sub2">total, / yr</span></button></th>
+          <th class="sortable" data-key="spy_ann"><button type="button">SPY return<span class="sub2">same dates, / yr</span></button></th>
+          <th class="sortable" data-key="be_profit"><button type="button">Break-even fee<span class="sub2">short profits</span></button></th>
+          <th class="sortable" data-key="be_spy"><button type="button">Break-even fee<span class="sub2">short beats SPY</span></button></th>
+          <th class="sortable" data-key="headroom"><button type="button">Verdict</button></th>
+          <th><span class="sr-only">Remove</span></th>
+        </tr>
+      </thead>
+      <tbody id="body"></tbody>
+    </table>
+    <div class="empty" id="empty" hidden>
+      <strong>No ETFs yet</strong>
+      Paste your list of ETF tickers above.
+    </div>
+  </div>
+  <div class="legend">
+    <span>Verdict compares the quoted fee with the break-even fees for the selected window. Click an ETF for its holdings and the full calculation.</span>
+  </div>
+
+  <section class="method" aria-labelledby="methodTitle">
+    <h2 id="methodTitle">How the numbers are calculated</h2>
+    <p><strong>Break-even fee.</strong> The ETF is shorted at the first close of the window and held to the latest close, using Yahoo's dividend-adjusted (total return) prices. Borrow is charged daily on the current market value of the short, on a 360-day year, so the short's profit as a share of its starting size is <code>−ETF total return − fee × A</code>, where <code>A</code> is the sum over days of the short's value relative to its starting value × days ÷ 360. Solving for the fee gives:</p>
+    <ul>
+      <li><strong>Short profits:</strong> <code>fee = −ETF return ÷ A</code></li>
+      <li><strong>Short beats SPY:</strong> <code>fee = (−ETF return − SPY return) ÷ A</code>, the fee at which the short earned the same as owning SPY over the same dates.</li>
+      <li><strong>Hedged pair</strong> (in each ETF's details): short the ETF and buy SPY with the same dollars, <code>fee = (SPY return − ETF return) ÷ A</code>.</li>
+    </ul>
+    <p>Worthwhile means the quoted fee is below the beat-SPY break-even. Interest earned on short proceeds, margin costs and the risk of recalls or fee spikes are left out.</p>
+    <p><strong>Theoretical fee.</strong> Each holding's weight in the ETF's latest report × that holding's IBKR borrow fee, summed. Holdings are matched by ISIN (or ticker); anything without an IBKR fee, such as cash, Treasuries or swaps, is charged the "fee for unmatched holdings" above. Swap and futures exposure isn't converted into its underlying stock, so for leveraged ETFs that hold mostly cash and swaps the theoretical fee sits close to that assumed rate.</p>
+    <p><strong>Sources.</strong> Quoted fees, rebates and availability: Interactive Brokers' public stock loan file, refreshed about every 15 minutes. Prices and history: Yahoo Finance. Holdings: the ETF's latest SEC N-PORT filing (complete, but filed quarterly and published up to 60 days later), or Yahoo's top 10 holdings when no filing is found. For information only, not investment advice.</p>
+  </section>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const LIST_KEY = "sbm.etfs.v1", GC_KEY = "sbm.etf.gc.v1", WIN_KEY = "sbm.etf.win.v1";
+let config = { default_etfs: [], gc_default: 0.25 };
+let etfs = [], gc = 0.25, win = "inception";
+let data = new Map();           // symbol -> server row
+let borrowState = null, anyPending = false;
+let sortKey = null, sortDir = 1;
+const open = new Set();
+let timer = null, inflight = null;
+
+// ---------- formatting ----------
+const isNum = (v) => typeof v === "number" && isFinite(v);
+const dash = "–";
+const pctf = (v, digits = 1) => isNum(v) ? `${(v * 100).toFixed(digits)}%` : dash;          // fraction -> %
+const pctp = (v, digits = 2) => isNum(v) ? `${v.toFixed(digits)}%` : dash;                   // already %
+const signedPct = (v) => isNum(v) ? `${v > 0 ? "+" : ""}${(v * 100).toFixed(1)}%` : dash;
+function compact(v) {
+  if (!isNum(v)) return dash;
+  const a = Math.abs(v);
+  if (a >= 1e12) return (v / 1e12).toFixed(2) + "T";
+  if (a >= 1e9) return (v / 1e9).toFixed(2) + "B";
+  if (a >= 1e6) return (v / 1e6).toFixed(a >= 1e7 ? 0 : 1) + "M";
+  if (a >= 1e3) return (v / 1e3).toFixed(a >= 1e4 ? 0 : 1) + "K";
+  return String(Math.round(v));
+}
+const heat = (f) => f < 1 ? 0 : f < 5 ? 1 : f < 20 ? 2 : f < 50 ? 3 : 4;
+function normalize(t) {
+  const s = t.trim().toUpperCase().replace(/^\$/, "").replace(/ /g, ".");
+  return /^[A-Z0-9][A-Z0-9.\-]{0,9}$/.test(s) ? s : null;
+}
+function el(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text != null) e.textContent = text;
+  return e;
+}
+function feeCell(td, fee) {
+  td.className = "fee";
+  td.innerHTML = '<span class="feecell"><span class="feebar"></span><span class="feeval"></span></span>';
+  const bar = td.querySelector(".feebar"), val = td.querySelector(".feeval");
+  if (!isNum(fee)) { val.textContent = dash; return; }
+  const h = heat(fee);
+  val.textContent = pctp(fee);
+  val.style.color = `var(--heat-${h})`;
+  bar.style.background = `var(--heat-${h})`;
+  bar.style.width = `${Math.max(6, Math.min(100, Math.log10(fee + 1) / 2 * 100))}%`;
+}
+
+// ---------- derived values for the selected window ----------
+function view(sym) {
+  const r = data.get(sym);
+  const v = { symbol: sym, r };
+  if (!r) return v;
+  const w = r.history && r.history.windows ? r.history.windows[win] : null;
+  const q = r.quote || {};
+  const theo = r.holdings && r.holdings.theo ? r.holdings.theo : null;
+  Object.assign(v, {
+    name: r.name || q.name, aum: r.aum, fee: q.fee, shares: q.shares, plus: q.plus,
+    theo: theo ? theo.fee : null, w,
+    etf_ann: w ? w.etf_ann : null, spy_ann: w ? w.spy_ann : null,
+    be_profit: w ? w.be_profit : null, be_spy: w ? w.be_spy : null,
+  });
+  v.mis = isNum(v.fee) && isNum(v.theo) ? v.fee - v.theo : null;
+  if (w && isNum(v.fee) && isNum(w.be_spy)) {
+    v.headroom = w.be_spy - v.fee;
+    v.verdict = v.fee <= w.be_spy ? "go" : (isNum(w.be_profit) && v.fee <= w.be_profit ? "meh" : "no");
+  }
+  if (w && isNum(v.fee)) {
+    const pnl = -w.etf_total - (v.fee / 100) * w.a;
+    v.short_ann = pnl > -1 ? Math.pow(1 + pnl, 1 / w.years) - 1 : -1;
+    v.short_total = pnl;
+  }
+  return v;
+}
+const VERDICT = { go: "Worthwhile", meh: "Profits, trails SPY", no: "Not worthwhile" };
+
+// ---------- table ----------
+function sorted(list) {
+  if (!sortKey) return list;
+  return [...list].sort((a, b) => {
+    const x = a[sortKey], y = b[sortKey];
+    if (x == null && y == null) return 0;
+    if (x == null) return 1;
+    if (y == null) return -1;
+    if (typeof x === "string") return x.localeCompare(y) * sortDir;
+    return (x - y) * sortDir;
+  });
+}
+
+function render() {
+  const body = $("body");
+  body.textContent = "";
+  $("empty").hidden = etfs.length > 0;
+  $("etfTable").hidden = etfs.length === 0;
+
+  for (const v of sorted(etfs.map(view))) {
+    const r = v.r;
+    const tr = body.insertRow();
+    const symTd = tr.insertCell(); symTd.className = "sym";
+    const btn = el("button", "expand");
+    btn.type = "button";
+    btn.setAttribute("aria-expanded", String(open.has(v.symbol)));
+    btn.setAttribute("aria-label", `${v.symbol} details`);
+    btn.append(el("span", "chev", "▶"));
+    const nm = el("span");
+    nm.append(el("span", "ticker", v.symbol));
+    if (v.name) { const n = el("span", "name", v.name); n.title = v.name; nm.append(n); }
+    btn.append(nm);
+    btn.addEventListener("click", () => { open.has(v.symbol) ? open.delete(v.symbol) : open.add(v.symbol); render(); });
+    symTd.append(btn);
+
+    if (!r) {
+      const td = tr.insertCell(); td.colSpan = 10; td.className = "note"; td.textContent = "Loading";
+    } else {
+      tr.insertCell().textContent = isNum(v.aum) ? "$" + compact(v.aum) : dash;
+      const feeTd = tr.insertCell();
+      if (!r.quote.listed) { feeTd.className = "note nowrap"; feeTd.textContent = "Not in IBKR file"; }
+      else feeCell(feeTd, v.fee);
+      const sh = tr.insertCell(); sh.textContent = isNum(v.shares) ? compact(v.shares) + (v.plus ? "+" : "") : dash;
+
+      const th = tr.insertCell();
+      if (r.holdings.pending) { th.textContent = "…"; th.className = "dim"; }
+      else if (r.holdings.error) { th.textContent = dash; th.className = "dim"; th.title = r.holdings.error; }
+      else { th.textContent = pctp(v.theo); if (!r.holdings.complete) th.title = "Top 10 holdings only"; }
+
+      const mis = tr.insertCell();
+      mis.textContent = isNum(v.mis) ? `${v.mis > 0 ? "+" : ""}${v.mis.toFixed(2)}` : dash;
+      mis.className = "mis " + (isNum(v.mis) ? (v.mis > 0.5 ? "rich" : v.mis < -0.5 ? "cheap" : "") : "dim");
+
+      if (r.history.pending || r.history.error || !v.w) {
+        const td = tr.insertCell(); td.colSpan = 5; td.className = "note";
+        td.textContent = r.history.pending ? "Loading price history…" :
+          r.history.error ? r.history.error :
+          `Not enough history for this window (since ${r.history.inception}).`;
+      } else {
+        const e = tr.insertCell(); e.textContent = signedPct(v.etf_ann); e.className = v.etf_ann < 0 ? "neg" : "pos";
+        const s = tr.insertCell(); s.textContent = signedPct(v.spy_ann); s.className = "dim";
+        tr.insertCell().textContent = pctp(v.be_profit, 1);
+        const bs = tr.insertCell(); bs.textContent = pctp(v.be_spy, 1); bs.style.fontWeight = "700";
+        const vd = tr.insertCell(); vd.className = "verdict-cell";
+        if (v.verdict) {
+          vd.append(el("span", "verdict " + v.verdict, VERDICT[v.verdict]));
+          vd.append(el("span", "headroom", `${v.headroom >= 0 ? "" : "−"}${Math.abs(v.headroom).toFixed(1)} pts ${v.headroom >= 0 ? "under" : "over"} break-even`));
+        } else { vd.textContent = dash; vd.className = "dim"; }
+      }
+    }
+    const x = tr.insertCell();
+    const rm = el("button", "remove", "×");
+    rm.type = "button"; rm.setAttribute("aria-label", `Remove ${v.symbol}`);
+    rm.addEventListener("click", () => removeEtf(v.symbol));
+    x.append(rm);
+
+    if (open.has(v.symbol)) body.append(detailRow(v));
+  }
+}
+
+function kv(dl, label, value, cls) {
+  dl.append(el("dt", null, label));
+  const dd = el("dd", cls, value);
+  dl.append(dd);
+}
+
+function detailRow(v) {
+  const tr = el("tr", "detail");
+  const td = tr.insertCell(); td.colSpan = 12;
+  const r = v.r;
+  if (!r) { td.textContent = "Loading"; return tr; }
+  const grid = el("div", "detail-grid");
+
+  // history
+  const h = el("div");
+  const label = { inception: "since inception", "3y": "over 3 years", "1y": "over 1 year" }[win];
+  h.append(el("h3", null, `Short held ${label}`));
+  const w = v.w;
+  if (!w) {
+    h.append(el("p", "note-line", r.history.pending ? "Loading price history…" : (r.history.error || "Not enough history for this window.")));
+  } else {
+    const dl = el("dl", "kv");
+    kv(dl, "Dates", `${w.start} to ${w.end} (${w.years.toFixed(1)} yrs)`);
+    kv(dl, "ETF total return", signedPct(w.etf_total));
+    kv(dl, "SPY total return", signedPct(w.spy_total));
+    kv(dl, "Average short size", isNum(w.avg_size) ? `${(w.avg_size * 100).toFixed(0)}% of starting` : dash);
+    dl.append(el("div", "sep"));
+    kv(dl, "Break-even: short profits", pctp(w.be_profit, 1));
+    kv(dl, "Break-even: short beats SPY", pctp(w.be_spy, 1));
+    kv(dl, "Break-even: short ETF, long SPY", pctp(w.be_hedged, 1));
+    if (isNum(v.fee)) {
+      dl.append(el("div", "sep"));
+      kv(dl, `Short at quoted ${pctp(v.fee)}`, `${signedPct(v.short_total)} total, ${signedPct(v.short_ann)} / yr`,
+         v.short_total >= 0 ? "pos" : "neg");
+      kv(dl, "SPY over the same dates", `${signedPct(w.spy_total)} total, ${signedPct(w.spy_ann)} / yr`);
+    }
+    h.append(dl);
+    if (w.years < 1) h.append(el("p", "note-line", "Less than a year of history, so these break-evens are noisy."));
+  }
+  if (r.expense != null) h.append(el("p", "note-line", `Expense ratio ${pctp(r.expense)} (already reflected in its total return).`));
+  if (r.quote && isNum(r.quote.rebate)) h.append(el("p", "note-line", `IBKR rebate on short proceeds: ${pctp(r.quote.rebate)} / yr.`));
+  grid.append(h);
+
+  // holdings
+  const g = el("div");
+  g.append(el("h3", null, "Theoretical fee from holdings"));
+  const hd = r.holdings;
+  if (hd.pending) g.append(el("p", "note-line", "Loading holdings…"));
+  else if (hd.error) g.append(el("p", "note-line", hd.error));
+  else {
+    const t = hd.theo;
+    const dl = el("dl", "kv");
+    const src = el("span");
+    if (hd.url) { const a = el("a", null, hd.source); a.href = hd.url; a.target = "_blank"; a.rel = "noopener"; a.style.color = "inherit"; src.append(a); }
+    else src.textContent = hd.source;
+    dl.append(el("dt", null, "Source")); const dd = el("dd"); dd.append(src); dl.append(dd);
+    kv(dl, "Holdings as of", hd.as_of || "Latest from Yahoo (date not given)");
+    if (t) {
+      kv(dl, "Holdings matched to an IBKR fee", `${t.matched} of ${t.count} (${(t.coverage * 100).toFixed(0)}% of weight)`);
+      kv(dl, "Theoretical fee", pctp(t.fee));
+      kv(dl, "Quoted fee", pctp(v.fee));
+    }
+    g.append(dl);
+    if (t && t.top.length) {
+      const tbl = el("table", "mini");
+      tbl.innerHTML = "<thead><tr><th>Holding</th><th>Weight</th><th>Borrow fee</th><th>Adds</th></tr></thead>";
+      const tb = el("tbody");
+      for (const x of t.top) {
+        const row = tb.insertRow();
+        row.insertCell().textContent = x.ticker ? `${x.ticker} · ${x.name}` : x.name;
+        row.insertCell().textContent = pctf(x.w, 2);
+        const f = row.insertCell();
+        f.textContent = isNum(x.fee) ? pctp(x.fee) : `${pctp(gc)} assumed`;
+        if (!isNum(x.fee)) f.className = "dim";
+        row.insertCell().textContent = pctp(x.contrib, 3);
+      }
+      tbl.append(tb);
+      g.append(tbl);
+      if (t.count > t.top.length) g.append(el("p", "note-line", `Largest ${t.top.length} of ${t.count} holdings shown.`));
+    }
+    for (const n of hd.notes || []) g.append(el("p", "note-line", n));
+    if (t && t.coverage < 0.5) g.append(el("p", "note-line", "Most of the weight has no IBKR fee (cash, bonds, swaps or unlisted names), so the assumed rate drives this estimate."));
+  }
+  grid.append(g);
+  td.append(grid);
+  return tr;
+}
+
+// ---------- data ----------
+async function refresh() {
+  clearTimeout(timer);
+  if (!etfs.length) { data.clear(); render(); return; }
+  const ctrl = new AbortController();
+  if (inflight) inflight.abort();
+  inflight = ctrl;
+  try {
+    const url = `/api/etf?symbols=${encodeURIComponent(etfs.join(","))}&gc=${encodeURIComponent(gc)}`;
+    const d = await (await fetch(url, { cache: "no-store", signal: ctrl.signal })).json();
+    if (d.error) { setStatus({ state: "error", text: d.error }); return; }
+    for (const r of d.rows) data.set(r.symbol, r);
+    setStatus(d.borrow);
+    anyPending = d.pending > 0;
+    $("loadHint").textContent = anyPending ? `Loading history and holdings for ${d.pending} item${d.pending > 1 ? "s" : ""}…` : "";
+    render();
+    timer = setTimeout(refresh, anyPending ? 3000 : 120000);
+  } catch (e) {
+    if (e.name === "AbortError") return;
+    setStatus({ state: "error", text: "Can't reach the server. Retrying." });
+    timer = setTimeout(refresh, 10000);
+  } finally {
+    if (inflight === ctrl) inflight = null;
+  }
+}
+function setStatus(b) {
+  $("status").dataset.state = b.state;
+  $("statusText").textContent =
+    b.state === "ok" ? `Borrow data updated ${b.as_of}` :
+    b.state === "error" ? (b.text || "Borrow data unavailable") : "Loading borrow data";
+}
+
+// ---------- list & settings ----------
+const save = (k, v) => { try { localStorage.setItem(k, typeof v === "string" ? v : JSON.stringify(v)); } catch {} };
+function load(k) { try { return localStorage.getItem(k); } catch { return null; } }
+
+function addEtfs(text) {
+  const good = text.split(/[,\s;]+/).filter(Boolean).map(normalize).filter(Boolean);
+  if (!good.length) return "Type an ETF ticker, like TSLL.";
+  let msg = "";
+  for (const s of good) if (!etfs.includes(s)) etfs.push(s);
+  if (etfs.length > 30) { etfs = etfs.slice(0, 30); msg = "The list can hold up to 30 ETFs."; }
+  save(LIST_KEY, etfs); render(); refresh();
+  return msg;
+}
+function removeEtf(sym) {
+  etfs = etfs.filter(s => s !== sym); open.delete(sym);
+  save(LIST_KEY, etfs); render();
+}
+function setWin(w) {
+  win = w; save(WIN_KEY, w);
+  document.querySelectorAll(".seg button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.win === w)));
+  render();
+}
+
+$("addForm").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const msg = addEtfs($("sym").value);
+  $("formError").textContent = msg;
+  if (!msg) $("sym").value = "";
+});
+$("clearBtn").addEventListener("click", () => { etfs = []; save(LIST_KEY, etfs); render(); });
+$("resetBtn").addEventListener("click", () => { etfs = [...config.default_etfs]; save(LIST_KEY, etfs); render(); refresh(); });
+document.querySelectorAll(".seg button").forEach(b => b.addEventListener("click", () => setWin(b.dataset.win)));
+let gcTimer = null;
+$("gc").addEventListener("input", () => {
+  const v = parseFloat($("gc").value);
+  if (!isFinite(v) || v < 0 || v > 100) return;
+  gc = v; save(GC_KEY, String(v));
+  clearTimeout(gcTimer); gcTimer = setTimeout(refresh, 400);
+});
+document.querySelectorAll("#etfTable th.sortable").forEach(th => {
+  th.querySelector("button").addEventListener("click", () => {
+    const k = th.dataset.key;
+    if (sortKey === k) sortDir = -sortDir; else { sortKey = k; sortDir = k === "symbol" ? 1 : -1; }
+    document.querySelectorAll("#etfTable th").forEach(h => h.removeAttribute("aria-sort"));
+    th.setAttribute("aria-sort", sortDir === 1 ? "ascending" : "descending");
+    render();
+  });
+});
+$("csvBtn").addEventListener("click", () => {
+  const head = ["ETF", "Name", "AUM", "Quoted fee %/yr", "Shares available", "Theoretical fee %/yr",
+    "Quoted minus theoretical (pts)", "Holdings source", "Holdings as of", "Holdings coverage",
+    "Window", "Start", "End", "ETF total return", "SPY total return", "ETF return /yr", "SPY return /yr",
+    "Break-even fee: profit %/yr", "Break-even fee: beat SPY %/yr", "Break-even fee: hedged %/yr", "Verdict"];
+  const q = (x) => x == null ? "" : `"${String(x).replace(/"/g, '""')}"`;
+  const lines = [head.map(q).join(",")];
+  for (const v of etfs.map(view)) {
+    const w = v.w || {}, hd = (v.r && v.r.holdings) || {}, t = hd.theo || {};
+    lines.push([v.symbol, v.name, v.aum, v.fee, v.shares, v.theo, v.mis, hd.source, hd.as_of, t.coverage,
+      win, w.start, w.end, w.etf_total, w.spy_total, w.etf_ann, w.spy_ann, w.be_profit, w.be_spy, w.be_hedged,
+      VERDICT[v.verdict]].map(q).join(","));
+  }
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([lines.join("\n")], { type: "text/csv" }));
+  a.download = `etf-short-screen-${win}-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click(); URL.revokeObjectURL(a.href);
+});
+
+(async function start() {
+  try { config = await (await fetch("/api/config")).json(); } catch {}
+  let saved = null;
+  try { saved = JSON.parse(load(LIST_KEY)); } catch {}
+  etfs = Array.isArray(saved) ? saved.filter(normalize) : [...(config.default_etfs || [])];
+  const g = parseFloat(load(GC_KEY));
+  gc = isFinite(g) ? g : (config.gc_default ?? 0.25);
+  $("gc").value = gc;
+  const w = load(WIN_KEY);
+  setWin(["inception", "3y", "1y"].includes(w) ? w : "inception");
+  refresh();
+})();
+</script>
+</body>
+</html>
