@@ -31,6 +31,8 @@ IBKR login or TWS is needed. Prices come from Yahoo Finance through the free
 - **Starting tickers for new visitors:** in Render, open the service → **Environment**,
   edit `DEFAULT_TICKERS` (for example `AAPL,TSLA,GME`) and save. The site restarts by itself.
 - **Code or page changes:** upload the new file to GitHub. Render updates the site automatically.
+- **Updating yfinance:** `requirements.txt` pins the version the site was tested with.
+  When Yahoo changes something and a newer yfinance fixes it, raise the version there.
 
 ## Metric tabs
 
@@ -46,9 +48,43 @@ Each tab shows every stock in your list. Click a column header to sort, use
 **Edit columns** to change a tab, and **Download CSV** to export it. Tabs are saved
 in each visitor's browser, like their stock list.
 
-Company data from Yahoo is cached for 15 minutes and performance figures for 30,
-shared across all visitors. The first time a stock is opened in a tab it can take
-a few seconds to load.
+### Where the values come from
+
+Each value comes from Yahoo's main quote data when Yahoo has it. When Yahoo leaves
+a value out, it's worked out from other Yahoo data instead, one metric at a time:
+
+- **Price history:** price, previous close, day range, volume, 52-week range,
+  moving averages, beta (5 years of monthly returns vs SPY, like Yahoo) and every
+  performance figure.
+- **Financial statements:** revenue, profits, margins, returns, growth, EPS, cash,
+  debt, book value and the current and quick ratios. Valuation ratios such as P/E
+  and EV/EBITDA are then calculated from those.
+- **Dividend and split history:** dividend rate, trailing dividends, 5-year average
+  yield, payout ratio, last dividend and last split.
+- **Analyst data, holders, earnings calendar and share-count history.**
+- **SEC filings** (when `SEC_USER_AGENT` is set): shares outstanding, and revenue,
+  net income, operating cash flow and cash from the latest annual report.
+
+Calculated values have a dotted underline. Hover any value to see where it came
+from. A cell with no value says why:
+
+| Shows | Means |
+|---|---|
+| n/a | Doesn't apply: to funds (P/E, margins…), to banks and insurers (gross margin, current ratio), with negative earnings (P/E), or not enough history yet (3-year return for a new listing) |
+| none | There isn't one: no dividend, no splits, no analyst coverage, not rated by ISS, no pre-market or after-hours trades yet |
+| closed | No live bid/ask outside market hours |
+| – | No short-interest report, not in IBKR's borrow file, or no source has it |
+
+Only the data an open tab needs is fetched. Quotes are cached for 15 minutes, price
+history for 30, the earnings calendar for 6 hours, and statements, analyst data and
+holders for 12 hours, shared across all visitors. Every Yahoo request on the site
+goes through one rate limit (`YAHOO_CALLS_PER_MIN`, default 150), and the site
+pauses for a minute and a half if Yahoo says it's getting too many requests. The
+first time a stock is opened in a tab it can take a few seconds to load.
+
+To check how many metrics get a value for real tickers, and that calculated values
+agree with Yahoo's own, run `python tools/metric_report.py` (add `-v` to list every
+metric).
 
 ## ETF short screen
 
@@ -56,6 +92,8 @@ Open `/etf` on your site (or click **ETF short screen** at the top of any page).
 Paste your ETF list into the box (single stocks work too) and each one gets a row with:
 
 - **Quoted fee and availability** from IBKR's stock loan file.
+- **Price** (latest from Yahoo, or the last close) and **$ available**: price ×
+  the shares IBKR has to lend, so you can see how much could be shorted.
 - **Window.** Since inception, 3 years, 1 year, or **Custom** with a date picker for
   any start date. A date before the ETF existed starts at its inception (the page says
   so), and a weekend or holiday moves to the next trading day.

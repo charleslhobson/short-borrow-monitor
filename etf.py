@@ -28,6 +28,8 @@ import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor, wait
 from datetime import date
 
+from common import LRU, yahoo_call
+
 SEC_USER_AGENT = os.environ.get("SEC_USER_AGENT", "").strip()
 GC_DEFAULT = float(os.environ.get("GC_RATE", "0.25"))     # % / yr assumed for unmatched holdings
 CASH_DEFAULT = float(os.environ.get("CASH_RATE", "0"))    # % / yr for cash, T-bills and money market funds
@@ -41,6 +43,7 @@ ERROR_MAX_AGE = 5 * 60        # failed lookups retried after 5 minutes
 WAIT_SEC = 8                  # how long one request waits for new data
 WINDOWS = {"inception": None, "3y": 3, "1y": 1}
 TOP_HOLDINGS_SHOWN = 15
+CACHE_LIMIT = 300             # most ETFs whose history / holdings stay in memory
 MIN_WINDOW_DAYS = 20          # trading days a window needs
 BETA_FULL_DAYS = 120          # a full beta needs this many daily returns...
 BETA_MIN_DAYS = 60            # ...and below this there's no beta at all
@@ -633,14 +636,14 @@ def _closes(hist):
 
 def fetch_history(yf, sym):
     t = yf.Ticker(yahoo_symbol(sym))
-    hist = t.history(period="max", interval="1d", auto_adjust=True)
+    hist = yahoo_call(lambda: t.history(period="max", interval="1d", auto_adjust=True))
     close = _closes(hist)
     if close is None or len(close) < 20:
         return {"_error": "Yahoo has no price history for this ticker"}
     out = {"close": close}
     if sym != BENCHMARK:
         try:
-            info = t.info or {}
+            info = yahoo_call(lambda: t.info) or {}
         except Exception:
             info = {}
         out["name"] = info.get("longName") or info.get("shortName")
@@ -671,7 +674,7 @@ def fetch_rfr(yf):
     """Daily risk-free rate (13-week / 3-month T-bill yield, % per year)."""
     problems = []
     try:
-        close = _closes(yf.Ticker(RFR_SYMBOL).history(period="max", interval="1d", auto_adjust=False))
+        close = _closes(yahoo_call(lambda: yf.Ticker(RFR_SYMBOL).history(period="max", interval="1d", auto_adjust=False)))
         if close is not None:
             close = close[(close > -5) & (close < 40)]
         if close is not None and len(close) > 250:
@@ -716,7 +719,7 @@ def fetch_holdings(yf, sym):
 
     t = yf.Ticker(yahoo_symbol(sym))
     try:
-        top = t.funds_data.top_holdings
+        top = yahoo_call(lambda: t.funds_data.top_holdings)
     except Exception:
         top = None
     holds = []
@@ -733,7 +736,7 @@ def fetch_holdings(yf, sym):
         return {"source": "Yahoo top 10", "as_of": None, "url": None, "complete": False,
                 "holdings": holds, "series": None, "net_assets": None, "notes": notes}
     try:
-        if (t.info or {}).get("quoteType") == "EQUITY":
+        if (yahoo_call(lambda: t.info) or {}).get("quoteType") == "EQUITY":
             return {"single_stock": True}
     except Exception:
         pass
@@ -1155,7 +1158,7 @@ class EtfService:
     def __init__(self, yf, borrow, foreign=None):
         self.yf, self.borrow, self.foreign = yf, borrow, foreign
         self.lock = threading.Lock()
-        self.cache = {"hist": {}, "hold": {}, "rfr": {}}
+        self.cache = {"hist": LRU(CACHE_LIMIT), "hold": LRU(CACHE_LIMIT), "rfr": LRU(4)}
         self.inflight = {}
         self.pool = ThreadPoolExecutor(max_workers=4)
         self._index = (None, None, None)      # (US table, foreign tables, MatchIndex)
@@ -1343,6 +1346,8 @@ class EtfService:
                 row["history"] = {"error": "Couldn't load SPY history from Yahoo"}
             else:
                 close = hist["close"]
+                row["last_close"] = float(close.iloc[-1])
+                row["last_date"] = close.index[-1].strftime("%Y-%m-%d")
                 row["name"] = hist.get("name")
                 row["aum"] = hist.get("aum")
                 row["expense"] = hist.get("expense")
