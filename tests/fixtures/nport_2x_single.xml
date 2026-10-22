@@ -1,0 +1,113 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<edgarSubmission xmlns="http://www.sec.gov/edgar/nport" xmlns:com="http://www.sec.gov/edgar/common">
+  <headerData><submissionType>NPORT-P</submissionType></headerData>
+  <formData>
+    <genInfo>
+      <regName>Test ETF Trust</regName>
+      <seriesName>Test Daily TSLA Bull 2X Shares</seriesName>
+      <seriesId>S000099991</seriesId>
+      <repPdEnd>2026-09-30</repPdEnd>
+      <repPdDate>2026-07-31</repPdDate>
+    </genInfo>
+    <fundInfo>
+      <totAssets>1100000000</totAssets>
+      <totLiabs>100000000</totLiabs>
+      <netAssets>1000000000</netAssets>
+    </fundInfo>
+    <invstOrSecs>
+      <invstOrSec>
+        <name>Tesla Inc</name>
+        <lei>54930043XZGB27CTOV49</lei>
+        <title>Tesla Inc</title>
+        <cusip>88160R101</cusip>
+        <identifiers><isin value="US88160R1014"/></identifiers>
+        <balance>500000</balance><units>NS</units><curCd>USD</curCd>
+        <valUSD>200000000</valUSD>
+        <pctVal>20.0</pctVal>
+        <payoffProfile>Long</payoffProfile>
+        <assetCat>EC</assetCat><issuerCat>CORP</issuerCat><invCountry>US</invCountry>
+      </invstOrSec>
+      <invstOrSec>
+        <name>Goldman Sachs International</name>
+        <lei>W22LROWP2IHZNBB6K528</lei>
+        <title>Tesla Inc Total Return Swap</title>
+        <cusip>000000000</cusip>
+        <identifiers><other otherDesc="Internal identifier" value="TRS-TSLA-GS"/></identifiers>
+        <balance>1</balance><units>NC</units><curCd>USD</curCd>
+        <valUSD>-5000000</valUSD>
+        <pctVal>-0.5</pctVal>
+        <payoffProfile>N/A</payoffProfile>
+        <assetCat>DE</assetCat><issuerCat>CORP</issuerCat><invCountry>US</invCountry>
+        <derivativeInfo>
+          <swapDeriv derivCat="SWP">
+            <counterparties><counterpartyName>Goldman Sachs International</counterpartyName></counterparties>
+            <descRefInstrmnt>
+              <otherRefInst>
+                <issuerName>Tesla Inc</issuerName>
+                <issueTitle>Tesla Inc</issueTitle>
+                <identifiers><cusip value="88160R101"/><isin value="US88160R1014"/><ticker value="TSLA"/></identifiers>
+              </otherRefInst>
+            </descRefInstrmnt>
+            <swapFlag>N</swapFlag>
+            <otherRecDesc fixedOrFloating="Other">Total return of Tesla Inc</otherRecDesc>
+            <floatingPmntDesc fixedOrFloating="Floating" floatingRtIndex="OBFR" floatingRtSpread="0.65" pmntAmt="1000000000" curCd="USD"/>
+            <terminationDt>2027-06-30</terminationDt>
+            <notionalAmt>1000000000</notionalAmt>
+            <curCd>USD</curCd>
+            <unrealizedAppr>-5000000</unrealizedAppr>
+          </swapDeriv>
+        </derivativeInfo>
+      </invstOrSec>
+      <invstOrSec>
+        <name>UBS AG</name>
+        <lei>BFM8T61CT2L1QCEMIK50</lei>
+        <title>Tesla Inc Total Return Swap</title>
+        <cusip>000000000</cusip>
+        <identifiers><other otherDesc="Internal identifier" value="TRS-TSLA-UBS"/></identifiers>
+        <balance>1</balance><units>NC</units><curCd>USD</curCd>
+        <valUSD>3000000</valUSD>
+        <pctVal>0.3</pctVal>
+        <payoffProfile>N/A</payoffProfile>
+        <assetCat>DE</assetCat><issuerCat>CORP</issuerCat><invCountry>CH</invCountry>
+        <derivativeInfo>
+          <swapDeriv derivCat="SWP">
+            <descRefInstrmnt>
+              <otherRefInst>
+                <issuerName>Tesla Inc</issuerName>
+                <issueTitle>Tesla Inc</issueTitle>
+                <identifiers><isin value="US88160R1014"/></identifiers>
+              </otherRefInst>
+            </descRefInstrmnt>
+            <otherRecDesc fixedOrFloating="Other">Total return of Tesla Inc</otherRecDesc>
+            <floatingPmntDesc fixedOrFloating="Floating" floatingRtIndex="OBFR" floatingRtSpread="0.70" curCd="USD"/>
+            <notionalAmt>800000000</notionalAmt>
+            <curCd>USD</curCd>
+            <unrealizedAppr>3000000</unrealizedAppr>
+          </swapDeriv>
+        </derivativeInfo>
+      </invstOrSec>
+      <invstOrSec>
+        <name>United States Treasury</name>
+        <title>United States Treasury Bill 0% 12/18/2026</title>
+        <cusip>912797QA5</cusip>
+        <identifiers><isin value="US912797QA53"/></identifiers>
+        <balance>300000000</balance><units>PA</units><curCd>USD</curCd>
+        <valUSD>300000000</valUSD>
+        <pctVal>30.0</pctVal>
+        <payoffProfile>Long</payoffProfile>
+        <assetCat>DBT</assetCat><issuerCat>UST</issuerCat><invCountry>US</invCountry>
+      </invstOrSec>
+      <invstOrSec>
+        <name>Goldman Sachs Financial Square Treasury Instruments Fund</name>
+        <title>Goldman Sachs Financial Square Treasury Instruments Fund - Institutional Shares</title>
+        <cusip>38141W273</cusip>
+        <identifiers><isin value="US38141W2733"/></identifiers>
+        <balance>450000000</balance><units>NS</units><curCd>USD</curCd>
+        <valUSD>450000000</valUSD>
+        <pctVal>45.0</pctVal>
+        <payoffProfile>Long</payoffProfile>
+        <assetCat>STIV</assetCat><issuerCat>RF</issuerCat><invCountry>US</invCountry>
+      </invstOrSec>
+    </invstOrSecs>
+  </formData>
+</edgarSubmission>

@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<edgarSubmission xmlns="http://www.sec.gov/edgar/nport">
+  <formData>
+    <genInfo><seriesName>Test Custom Basket Bear 1X</seriesName><repPdDate>2026-07-31</repPdDate></genInfo>
+    <fundInfo><netAssets>200000000</netAssets></fundInfo>
+    <invstOrSecs>
+      <invstOrSec>
+        <name>Morgan Stanley</name><title>Custom Basket Swap</title><cusip>000000000</cusip>
+        <identifiers/><pctVal>1</pctVal><payoffProfile>N/A</payoffProfile>
+        <assetCat>DE</assetCat><issuerCat>CORP</issuerCat>
+        <derivativeInfo>
+          <swapDeriv derivCat="SWP">
+            <descRefInstrmnt>
+              <indexBasketInfo>
+                <indexName>Custom Basket</indexName><indexIdentifier>N/A</indexIdentifier>
+                <components>
+                  <component>
+                    <othIndName>NVIDIA Corp</othIndName>
+                    <othIndIdentifiers><isin value="US67066G1040"/></othIndIdentifiers>
+                    <othIndNotAmt>150000000</othIndNotAmt>
+                  </component>
+                  <component>
+                    <othIndName>Tesla Inc</othIndName>
+                    <othIndIdentifiers><ticker value="TSLA"/></othIndIdentifiers>
+                    <othIndNotAmt>50000000</othIndNotAmt>
+                  </component>
+                </components>
+              </indexBasketInfo>
+            </descRefInstrmnt>
+            <notionalAmt>200000000</notionalAmt><curCd>USD</curCd>
+          </swapDeriv>
+        </derivativeInfo>
+      </invstOrSec>
+      <invstOrSec>
+        <name>Morgan Stanley</name><title>Custom Basket Swap (long leg)</title><cusip>000000000</cusip>
+        <identifiers/><pctVal>0.5</pctVal><payoffProfile>N/A</payoffProfile>
+        <assetCat>DE</assetCat><issuerCat>CORP</issuerCat>
+        <derivativeInfo>
+          <swapDeriv derivCat="SWP">
+            <descRefInstrmnt>
+              <indexBasketInfo>
+                <indexName>Custom Basket</indexName>
+                <components>
+                  <component>
+                    <name>NVIDIA Corp</name>
+                    <identifiers><isin value="US67066G1040"/></identifiers>
+                    <notionalAmt>30000000</notionalAmt>
+                  </component>
+                  <component>
+                    <name>Tesla Inc</name>
+                    <identifiers><isin value="US88160R1014"/></identifiers>
+                    <notionalAmt>10000000</notionalAmt>
+                  </component>
+                </components>
+              </indexBasketInfo>
+            </descRefInstrmnt>
+            <otherRecDesc fixedOrFloating="Other">Custom basket total return</otherRecDesc>
+            <fixedPmntDesc fixedOrFloating="Fixed" fixedRt="4.5" curCd="USD"/>
+            <notionalAmt>40000000</notionalAmt><curCd>USD</curCd>
+          </swapDeriv>
+        </derivativeInfo>
+      </invstOrSec>
+      <invstOrSec>
+        <name>Fidelity Government Portfolio</name><title>Fidelity Government Portfolio</title><cusip>316175108</cusip>
+        <identifiers/><pctVal>98.5</pctVal><payoffProfile>Long</payoffProfile>
+        <assetCat>STIV</assetCat><issuerCat>RF</issuerCat>
+      </invstOrSec>
+    </invstOrSecs>
+  </formData>
+</edgarSubmission>

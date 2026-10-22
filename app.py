@@ -71,6 +71,12 @@ def availability(entry):
 
 
 # ----------------------------- borrow data --------------------------------
+def borrow_rank(entry):
+    """When IBKR lists a stock twice, keep the row with a fee, then the one with more shares."""
+    shares = entry.get("shares")
+    return (entry.get("fee") is not None, shares if shares is not None else -1)
+
+
 def parse_borrow_text(text):
     table, header, as_of = {}, None, ""
     for line in text.splitlines():
@@ -83,11 +89,11 @@ def parse_borrow_text(text):
         else:
             row = dict(zip(header, (p.strip() for p in line.split("|"))))
             sym = normalize(row.get("SYM", ""))
-            if not sym or sym in table:
+            if not sym:
                 continue
             raw = row.get("AVAILABLE", "")
             digits = raw.replace(">", "").replace(",", "").strip()
-            table[sym] = {
+            entry = {
                 "name": row.get("NAME", "").title(),
                 "fee": to_float(row.get("FEERATE")),
                 "rebate": to_float(row.get("REBATERATE")),
@@ -95,7 +101,16 @@ def parse_borrow_text(text):
                 "plus": raw.startswith(">"),
                 "isin": row.get("ISIN", "").upper() or None,
             }
+            old = table.get(sym)
+            if old is None or borrow_rank(entry) > borrow_rank(old):
+                table[sym] = entry
     return table, as_of
+
+
+def ftp_download(ftp, name):
+    buf = io.BytesIO()
+    ftp.retrbinary(f"RETR {name}", buf.write)
+    return buf.getvalue().decode("utf-8", errors="replace")
 
 
 class Borrow:
@@ -105,11 +120,9 @@ class Borrow:
         self.fetched, self.refreshing = 0.0, False
 
     def _download(self):
-        buf = io.BytesIO()
         with ftplib.FTP(FTP_HOST, timeout=30) as ftp:
             ftp.login(FTP_USER, "")
-            ftp.retrbinary(f"RETR {FTP_FILE}", buf.write)
-        return buf.getvalue().decode("utf-8", errors="replace")
+            return ftp_download(ftp, FTP_FILE)
 
     def refresh(self):
         fetched = time.time()
@@ -148,20 +161,65 @@ class Borrow:
         with self.lock:
             return self.table, self.top, self.as_of, self.error, self.refreshing
 
-    def isin_index(self):
-        """ISIN -> borrow entry, rebuilt only when a new file has loaded."""
+
+class ForeignBorrow:
+    """IBKR's non-US stock loan files (japan.txt, british.txt, ...).
+
+    Used only to price foreign holdings on the ETF screen. They load in the
+    background the first time the ETF screen asks, so the Stocks page never
+    waits for them.
+    """
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.tables, self.error = {}, ""          # country (file name without .txt) -> table
+        self.fetched, self.refreshing = 0.0, False
+
+    def refresh(self):
+        fetched = time.time()
+        try:
+            tables = {}
+            with ftplib.FTP(FTP_HOST, timeout=30) as ftp:
+                ftp.login(FTP_USER, "")
+                names = sorted({n.rsplit("/", 1)[-1] for n in ftp.nlst()})
+                for name in names:
+                    low = name.lower()
+                    if not low.endswith(".txt") or low == FTP_FILE:
+                        continue
+                    table, _ = parse_borrow_text(ftp_download(ftp, name))
+                    if table:
+                        tables[low[:-4]] = table
+            if not tables:
+                raise ValueError("no country files were found")
+            with self.lock:
+                self.tables, self.error = tables, ""
+            print(f"Foreign borrow files loaded: {', '.join(sorted(tables))}", flush=True)
+        except Exception as e:
+            fetched = time.time() - BORROW_MAX_AGE + 5 * BORROW_RETRY
+            with self.lock:
+                self.error = f"Couldn't download IBKR's non-US borrow files ({e})."
+            print(self.error, flush=True)
+        finally:
+            with self.lock:
+                self.fetched, self.refreshing = fetched, False
+
+    def ensure_fresh(self):
         with self.lock:
-            table = self.table
-            if getattr(self, "_isin_src", None) is not table:
-                self._isin = {e["isin"]: dict(e, symbol=s) for s, e in table.items() if e.get("isin")}
-                self._isin_src = table
-            return self._isin
+            if self.refreshing or time.time() - self.fetched < BORROW_MAX_AGE:
+                return
+            self.refreshing = True
+        threading.Thread(target=self.refresh, daemon=True).start()
+
+    def snapshot(self):
+        with self.lock:
+            return self.tables, self.refreshing, self.error
 
 
 BORROW = Borrow()
+FOREIGN = ForeignBorrow()
 
 import etf as etf_mod                      # ETF short screen (etf.py)
-ETF = etf_mod.EtfService(yf, BORROW) if yf is not None else None
+ETF = etf_mod.EtfService(yf, BORROW, FOREIGN) if yf is not None else None
 DEFAULT_ETFS = [s for s in (normalize(x) for x in os.environ.get(
     "DEFAULT_ETFS", "TSLL,NVDL,CONL,MSTU,SOXL").split(",")) if s]
 
@@ -574,6 +632,12 @@ METRICS = Metrics()
 
 
 # ------------------------------ web server --------------------------------
+def rate_param(query, key, default):
+    """A % / yr rate from the query string, between 0 and 100."""
+    v = to_float(query.get(key, [""])[0])
+    return default if v is None or not math.isfinite(v) or not 0 <= v <= 100 else v
+
+
 def borrow_status(table, as_of, error, refreshing):
     if table:
         return {"state": "ok", "as_of": as_of}
@@ -612,20 +676,29 @@ class Handler(BaseHTTPRequestHandler):
         if path in ("/etf", "/etf.html"):
             return self._send(200, (APP_DIR / "etf.html").read_bytes(),
                               "text/html; charset=utf-8", "no-cache")
-        if path == "/api/etf":
+        if path in ("/api/etf", "/api/etf/holdings"):
             if ETF is None:
                 return self._json({"error": "yfinance is not installed on the server."})
+            gc = rate_param(query, "gc", etf_mod.GC_DEFAULT)
+            cash = rate_param(query, "cash", etf_mod.CASH_DEFAULT)
+            if path == "/api/etf/holdings":
+                sym = normalize(query.get("symbol", [""])[0])
+                if not sym:
+                    return self._json({"error": "Give one ETF ticker, e.g. ?symbol=TSLL"})
+                return self._json(ETF.holdings_detail(sym, gc, cash))
             raw = ",".join(query.get("symbols", [""]))
             syms = list(dict.fromkeys(s for s in (normalize(x) for x in raw.split(",")) if s))
-            gc = to_float(query.get("gc", [""])[0])
-            gc = etf_mod.GC_DEFAULT if gc is None or not 0 <= gc <= 100 else gc
-            return self._json(ETF.report(syms[:MAX_SYMBOLS], gc))
+            start, start_error = etf_mod.parse_start_date(query.get("start", [""])[0])
+            out = ETF.report(syms[:MAX_SYMBOLS], gc, cash, start)
+            out["start_error"] = start_error
+            return self._json(out)
         if path == "/healthz":
             return self._send(200, "ok", "text/plain")
         if path == "/api/config":
             return self._json({"default_tickers": DEFAULT_TICKERS,
                                "default_etfs": DEFAULT_ETFS,
                                "gc_default": etf_mod.GC_DEFAULT,
+                               "cash_default": etf_mod.CASH_DEFAULT,
                                "prices_enabled": PRICES_ON,
                                "limited_below": LIMITED_BELOW})
 

@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<edgarSubmission xmlns="http://www.sec.gov/edgar/nport">
+  <formData>
+    <genInfo><seriesName>Test Daily Semiconductor Bull 3X Shares</seriesName><repPdDate>2026-07-31</repPdDate></genInfo>
+    <fundInfo><netAssets>1000000000</netAssets></fundInfo>
+    <invstOrSecs>
+      <invstOrSec>
+        <name>United States Treasury</name><title>US Treasury Bill</title><cusip>912797PZ9</cusip>
+        <identifiers/><pctVal>40</pctVal><payoffProfile>Long</payoffProfile>
+        <assetCat>DBT</assetCat><issuerCat>UST</issuerCat>
+      </invstOrSec>
+      <invstOrSec>
+        <name>Fidelity Government Portfolio</name><title>Fidelity Government Portfolio Institutional</title><cusip>316175108</cusip>
+        <identifiers/><pctVal>50</pctVal><payoffProfile>Long</payoffProfile>
+        <assetCat>STIV</assetCat><issuerCat>RF</issuerCat>
+      </invstOrSec>
+      <invstOrSec>
+        <name>Bank of America NA</name><title>ICE Semiconductor Index Swap</title><cusip>000000000</cusip>
+        <identifiers/><pctVal>2</pctVal><payoffProfile>N/A</payoffProfile>
+        <assetCat>DE</assetCat><issuerCat>CORP</issuerCat>
+        <derivativeInfo>
+          <swapDeriv derivCat="SWP">
+            <descRefInstrmnt>
+              <indexBasketInfo><indexName>ICE Semiconductor Index</indexName><indexIdentifier>ICESEMIT</indexIdentifier></indexBasketInfo>
+            </descRefInstrmnt>
+            <otherRecDesc fixedOrFloating="Other">ICE Semiconductor Index total return</otherRecDesc>
+            <floatingPmntDesc fixedOrFloating="Floating" floatingRtIndex="SOFR" curCd="USD"/>
+            <notionalAmt>3000000000</notionalAmt><curCd>USD</curCd>
+          </swapDeriv>
+        </derivativeInfo>
+      </invstOrSec>
+    </invstOrSecs>
+  </formData>
+</edgarSubmission>

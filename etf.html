@@ -169,18 +169,27 @@
   .seg button { background: none; border: 0; padding: 7px 12px; color: var(--muted); font-weight: 600; font-size: 14px; }
   .seg button + button { border-left: 1px solid var(--rule); }
   .seg button[aria-pressed="true"] { background: var(--ink); color: var(--surface); }
-  .page { max-width: 1300px; }
-  #etfTable { min-width: 1040px; }
+  .page { max-width: 1440px; }
+  #etfTable { min-width: 1340px; }
+  .settings input[type=date] { flex: none; width: 168px; text-transform: none; padding: 6px 10px; font-size: 15px; }
+  .date-error { color: var(--down); font-size: 13px; }
+  .cellsub { display: block; font-size: 12px; color: var(--muted); font-weight: 400; margin-top: 2px; white-space: nowrap; }
+  .warnline { display: block; font-size: 12px; color: var(--heat-3); font-weight: 600; margin-top: 2px; }
+  .warnbox { border: 1px solid var(--heat-3); border-radius: 8px; padding: 8px 12px; margin: 0 0 10px; font-size: 13px; }
+  .detail-wide { grid-column: 1 / -1; }
+  .mini td.how { white-space: normal; text-align: left; min-width: 180px; }
+  .mini td.how .cellsub { white-space: normal; max-width: 420px; }
+  .holdtools { display: flex; flex-wrap: wrap; gap: 4px 16px; align-items: center; margin-top: 8px; }
   #etfTable thead th { white-space: normal; vertical-align: bottom; }
   #etfTable thead th.sortable button { line-height: 1.25; }
-  #etfTable td.verdict-cell { white-space: normal; min-width: 128px; }
-  .headroom { white-space: nowrap; }
+  #etfTable td.verdict-cell { white-space: normal; min-width: 150px; max-width: 230px; }
   #etfTable .mini th, #etfTable .mini td { padding: 5px 8px; }
-  #etfTable thead th.sortable { min-width: 80px; }
+  #etfTable thead th.sortable { min-width: 62px; }
+  #etfTable .name { max-width: 170px; }
   #etfTable td.nowrap { white-space: nowrap; }
   #etfTable th, #etfTable td { padding-left: 9px; padding-right: 9px; }
   #etfTable thead th.sortable button { padding: 12px 9px; }
-  #etfTable td.fee { min-width: 112px; }
+  #etfTable td.fee { min-width: 96px; }
   #etfTable thead th:first-child { position: sticky; left: 0; background: var(--surface); z-index: 1; }
   #etfTable td.sym { z-index: 1; }
   th .sub2 { display: block; font-weight: 500; font-size: 11px; }
@@ -189,18 +198,25 @@
   }
   td.sym .chev { color: var(--muted); font-size: 12px; margin-top: 4px; transition: transform .15s; }
   button.expand[aria-expanded="true"] .chev { transform: rotate(90deg); }
-  .verdict { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 13px; font-weight: 600; border: 1px solid currentColor; }
+  .verdict { display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 13px; font-weight: 600; border: 1px solid currentColor; line-height: 1.35; }
   .verdict.go { color: var(--up); }
   .verdict.meh { color: var(--heat-3); }
   .verdict.no { color: var(--down); }
-  .headroom { display: block; font-size: 12px; color: var(--muted); margin-top: 3px; }
+  .verdict.low { color: var(--muted); }
+  .headroom { display: block; font-size: 12px; color: var(--muted); margin-top: 3px; white-space: normal; }
   .mis.rich { color: var(--down); font-weight: 700; }
   .mis.cheap { color: var(--up); font-weight: 700; }
   tr.detail td { background: var(--bg); white-space: normal; text-align: left; padding: 18px 20px 22px; }
   tr.detail:hover td { background: var(--bg); }
-  .detail-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 18px 32px; }
+  .detail-grid {
+    display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px 40px;
+    position: sticky; left: 20px; width: min(1360px, calc(100vw - 110px));
+  }
+  @media (max-width: 900px) { .detail-grid { grid-template-columns: minmax(0, 1fr); width: calc(100vw - 72px); left: 12px; } }
   .detail h3 { font-size: 15px; margin: 0 0 8px; }
-  .kv { display: grid; grid-template-columns: 1fr auto; gap: 4px 16px; font-size: 14px; margin: 0; }
+  .kv { display: grid; grid-template-columns: minmax(150px, 1fr) minmax(0, max-content); gap: 4px 16px; font-size: 14px; margin: 0; }
+  .kv dd { overflow-wrap: anywhere; }
+  .detail-wide .kv, .detail-wide .mini.groups { max-width: 640px; }
   .kv dt { color: var(--muted); }
   .kv dd { margin: 0; text-align: right; font-weight: 600; }
   .kv .sep { grid-column: 1 / -1; border-top: 1px solid var(--rule); margin: 4px 0; }
@@ -251,9 +267,17 @@
       <button type="button" data-win="inception" aria-pressed="true">Since inception</button>
       <button type="button" data-win="3y" aria-pressed="false">3 years</button>
       <button type="button" data-win="1y" aria-pressed="false">1 year</button>
+      <button type="button" data-win="custom" aria-pressed="false">Custom</button>
     </span>
+    <label for="startDate">From
+      <input id="startDate" type="date" min="1993-01-29">
+    </label>
+    <span class="date-error" id="dateError" role="alert"></span>
     <label for="gc">Fee for unmatched holdings
       <input id="gc" type="number" min="0" max="100" step="0.05" inputmode="decimal"> % / yr
+    </label>
+    <label for="cash">Fee for cash &amp; T-bills
+      <input id="cash" type="number" min="0" max="100" step="0.05" inputmode="decimal"> % / yr
     </label>
     <span class="hint" id="loadHint" aria-live="polite" style="color:var(--muted);font-size:13px"></span>
   </div>
@@ -270,8 +294,11 @@
           <th class="sortable" data-key="mis"><button type="button">Gap<span class="sub2">quoted − theo, pts</span></button></th>
           <th class="sortable" data-key="etf_ann"><button type="button">ETF return<span class="sub2">total, / yr</span></button></th>
           <th class="sortable" data-key="spy_ann"><button type="button">SPY return<span class="sub2">same dates, / yr</span></button></th>
-          <th class="sortable" data-key="be_profit"><button type="button">Break-even fee<span class="sub2">short profits</span></button></th>
-          <th class="sortable" data-key="be_spy"><button type="button">Break-even fee<span class="sub2">short beats SPY</span></button></th>
+          <th class="sortable" data-key="rfr"><button type="button">RFR<span class="sub2">same dates, / yr</span></button></th>
+          <th class="sortable" data-key="beta"><button type="button">Beta<span class="sub2">vs SPY, 1y daily</span></button></th>
+          <th class="sortable" data-key="be_cash"><button type="button">Break-even fee<span class="sub2">short profits, after RFR</span></button></th>
+          <th class="sortable" data-key="be_beta"><button type="button">Break-even fee<span class="sub2">beta-adj. vs shorting SPY</span></button></th>
+          <th class="sortable" data-key="hedge_beta"><button type="button">Hedge cost<span class="sub2">per −1.00 β, quoted fee</span></button></th>
           <th class="sortable" data-key="headroom"><button type="button">Verdict</button></th>
           <th><span class="sr-only">Remove</span></th>
         </tr>
@@ -284,40 +311,56 @@
     </div>
   </div>
   <div class="legend">
-    <span>Verdict compares the quoted fee with the break-even fees for the selected window. Click an ETF for its holdings and the full calculation.</span>
+    <span>Verdict compares the quoted fee with the beta-adjusted break-even for the selected window: is shorting this ETF, levered to −1.00 beta, a cheaper hedge than shorting SPY? Click an ETF for the full calculation and every holding.</span>
   </div>
 
   <section class="method" aria-labelledby="methodTitle">
     <h2 id="methodTitle">How the numbers are calculated</h2>
-    <p><strong>Break-even fee.</strong> The ETF is shorted at the first close of the window and held to the latest close, using Yahoo's dividend-adjusted (total return) prices. Borrow is charged daily on the current market value of the short, on a 360-day year, so the short's profit as a share of its starting size is <code>−ETF total return − fee × A</code>, where <code>A</code> is the sum over days of the short's value relative to its starting value × days ÷ 360. Solving for the fee gives:</p>
+    <p><strong>Returns, risk-free rate and beta.</strong> The ETF is shorted at the first close of the window (since inception, 3 years, 1 year, or from the date you pick, moved to the first trading day on or after it) and held to the latest close, using Yahoo's dividend-adjusted (total return) prices. <code>R_X</code> and <code>R_SPY</code> are the ETF's and SPY's annualized returns over those dates. <code>RFR</code> is the 13-week Treasury bill yield (Yahoo <code>^IRX</code>, or FRED's 3-month bill rate if Yahoo has none), accrued every day on actual/360 over the same dates and annualized the same way. Beta is the ETF's beta to SPY from the last year of daily returns (covariance ÷ variance, on days both traded), whatever window is selected; with 60–119 days of history it's marked with *, and with fewer there's no beta.</p>
+    <p><strong>Break-even fees.</strong> A short earns the risk-free rate on its proceeds, so shorting SPY gives −1.00 beta at a hedge cost of <code>RFR − R_SPY</code> a year. Shorting the ETF at fee <code>f</code> gives −β at <code>RFR − R_X − f</code>; levered up to −1.00 beta (× 1/β), that's <code>(RFR − R_X − f) ÷ β</code>.</p>
     <ul>
-      <li><strong>Short profits:</strong> <code>fee = −ETF return ÷ A</code></li>
-      <li><strong>Short beats SPY:</strong> <code>fee = (−ETF return − SPY return) ÷ A</code>, the fee at which the short earned the same as owning SPY over the same dates.</li>
-      <li><strong>Hedged pair</strong> (in each ETF's details): short the ETF and buy SPY with the same dollars, <code>fee = (SPY return − ETF return) ÷ A</code>.</li>
+      <li><strong>Short profits, after RFR:</strong> <code>f = RFR − R_X</code>. Levering up doesn't move where profit crosses zero, so beta doesn't enter.</li>
+      <li><strong>Beta-adjusted vs shorting SPY:</strong> <code>f = β × (R_SPY − RFR) − (R_X − RFR)</code>, the fee at which the levered short costs the same per unit of beta as shorting SPY.</li>
     </ul>
-    <p>Worthwhile means the quoted fee is below the beat-SPY break-even. Interest earned on short proceeds, margin costs and the risk of recalls or fee spikes are left out.</p>
-    <p><strong>Theoretical fee.</strong> Each holding's weight in the ETF's latest report × that holding's IBKR borrow fee, summed. Holdings are matched by ISIN (or ticker); anything without an IBKR fee, such as cash, Treasuries or swaps, is charged the "fee for unmatched holdings" above. Swap and futures exposure isn't converted into its underlying stock, so for leveraged ETFs that hold mostly cash and swaps the theoretical fee sits close to that assumed rate.</p>
-    <p><strong>Sources.</strong> Quoted fees, rebates and availability: Interactive Brokers' public stock loan file, refreshed about every 15 minutes. Prices and history: Yahoo Finance. Holdings: the ETF's latest SEC N-PORT filing (complete, but filed quarterly and published up to 60 days later), or Yahoo's top 10 holdings when no filing is found. For information only, not investment advice.</p>
+    <p>Example: SPY +10% a year and RFR 4%, so shorting SPY costs −6% a year per −1.00 beta. An ETF with beta 0.2 returning +5% costs −1% a year at no fee, or −5% levered ×5, 1 point cheaper than SPY. Its break-even fee is 0.2 × 6% − 1% = 0.2% a year.</p>
+    <p><strong>Verdict.</strong> Worthwhile: the quoted fee is at or below the beta-adjusted break-even. Profits, costlier hedge than SPY: below the short-profits break-even only. Not worthwhile: above both. Betas under 0.1 (or no beta) aren't treated as a SPY hedge. Each ETF's details also show the previous, unadjusted break-evens, which charge borrow daily on the short's current value (360-day year): short profits <code>−R ÷ A</code>, short beats owning SPY <code>(−R − R_SPY) ÷ A</code> and short ETF / long SPY <code>(R_SPY − R) ÷ A</code>, where <code>A</code> is the sum of the short's value relative to its start × days ÷ 360. Margin costs, IBKR's spread on interest, recalls and fee changes are left out.</p>
+    <p><strong>Theoretical fee.</strong> Every position in the ETF's latest holdings report, weighted by its exposure as a share of net assets (not re-scaled to 100%), times its borrow fee, summed:</p>
+    <ul>
+      <li><strong>Stocks and ETFs:</strong> the IBKR fee, matched by ISIN, CUSIP, ticker, IBKR's non-US country files, or as a last resort a unique exact company-name match.</li>
+      <li><strong>Swaps and futures:</strong> exposure is the notional amount ÷ net assets, at the fee of the stock they track. Index swaps use the components listed in the filing, else the fund's own stock holdings as a stand-in for the index, else an ETF that holds the index (for example SOXX for semiconductors). Options use delta-adjusted exposure. So a 2x single-stock ETF comes out at about 2 × that stock's fee.</li>
+      <li><strong>Short exposure</strong> (inverse funds, written calls) needs no borrow: 0%.</li>
+      <li><strong>Cash, T-bills, Treasuries, money market funds and repo</strong> aren't borrowed to replicate the fund: they're charged the "fee for cash &amp; T-bills" above (0% by default).</li>
+      <li><strong>Bonds and anything unmatched</strong> are charged the "fee for unmatched holdings" above. Rate, currency, credit and commodity derivatives count as 0%.</li>
+    </ul>
+    <p>Click an ETF to see every position, its fee and how it was matched, or download them as a CSV.</p>
+    <p><strong>Sources.</strong> Quoted fees, rebates and availability: Interactive Brokers' public stock loan files, refreshed about every 15 minutes. Prices, history and the T-bill yield: Yahoo Finance (FRED as a fallback for the yield). Holdings: the ETF's latest SEC N-PORT filing (complete, but filed quarterly and published up to 60 days later), or Yahoo's top 10 holdings when no filing is found. For information only, not investment advice.</p>
   </section>
 </div>
 
 <script>
 const $ = (id) => document.getElementById(id);
 const LIST_KEY = "sbm.etfs.v1", GC_KEY = "sbm.etf.gc.v1", WIN_KEY = "sbm.etf.win.v1";
-let config = { default_etfs: [], gc_default: 0.25 };
-let etfs = [], gc = 0.25, win = "inception";
+const CASH_KEY = "sbm.etf.cash.v1", START_KEY = "sbm.etf.start.v1";
+const WINDOWS = ["inception", "3y", "1y", "custom"];
+let config = { default_etfs: [], gc_default: 0.25, cash_default: 0 };
+let etfs = [], gc = 0.25, cash = 0, win = "inception", customStart = "";
 let data = new Map();           // symbol -> server row
+let meta = {};                  // top-level response fields (rfr state, start error...)
 let borrowState = null, anyPending = false;
 let sortKey = null, sortDir = 1;
 const open = new Set();
+const showAll = new Set();
+const full = new Map();         // symbol -> {key, state, data, error, promise}: every holding, loaded on demand
 let timer = null, inflight = null;
 
 // ---------- formatting ----------
 const isNum = (v) => typeof v === "number" && isFinite(v);
 const dash = "–";
-const pctf = (v, digits = 1) => isNum(v) ? `${(v * 100).toFixed(digits)}%` : dash;          // fraction -> %
-const pctp = (v, digits = 2) => isNum(v) ? `${v.toFixed(digits)}%` : dash;                   // already %
-const signedPct = (v) => isNum(v) ? `${v > 0 ? "+" : ""}${(v * 100).toFixed(1)}%` : dash;
+const minus = (s) => s.replace("-", "−");
+const pctf = (v, digits = 1) => isNum(v) ? minus(`${(v * 100).toFixed(digits)}%`) : dash;   // fraction -> %
+const pctp = (v, digits = 2) => isNum(v) ? minus(`${v.toFixed(digits)}%`) : dash;           // already %
+const signedPct = (v, digits = 1) => isNum(v) ? `${v > 0 ? "+" : ""}${minus((v * 100).toFixed(digits))}%` : dash;
+const signedP = (v, digits = 1) => isNum(v) ? `${v > 0 ? "+" : ""}${minus(v.toFixed(digits))}%` : dash;
 function compact(v) {
   if (!isNum(v)) return dash;
   const a = Math.abs(v);
@@ -347,28 +390,31 @@ function feeCell(td, fee) {
   val.textContent = pctp(fee);
   val.style.color = `var(--heat-${h})`;
   bar.style.background = `var(--heat-${h})`;
-  bar.style.width = `${Math.max(6, Math.min(100, Math.log10(fee + 1) / 2 * 100))}%`;
+  bar.style.width = `${Math.max(6, Math.min(100, Math.log10(Math.max(fee, 0) + 1) / 2 * 100))}%`;
 }
+const today = () => { const d = new Date(); return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10); };
 
 // ---------- derived values for the selected window ----------
 function view(sym) {
   const r = data.get(sym);
   const v = { symbol: sym, r };
   if (!r) return v;
-  const w = r.history && r.history.windows ? r.history.windows[win] : null;
+  const h = r.history || {};
+  const raw = h.windows ? h.windows[win] : undefined;
+  const w = raw && !raw.error ? raw : null;
   const q = r.quote || {};
   const theo = r.holdings && r.holdings.theo ? r.holdings.theo : null;
+  const beta = h.beta || {};
   Object.assign(v, {
     name: r.name || q.name, aum: r.aum, fee: q.fee, shares: q.shares, plus: q.plus,
-    theo: theo ? theo.fee : null, w,
-    etf_ann: w ? w.etf_ann : null, spy_ann: w ? w.spy_ann : null,
-    be_profit: w ? w.be_profit : null, be_spy: w ? w.be_spy : null,
+    theo: theo ? theo.fee : null, w, werr: raw && raw.error ? raw.error : null, raw,
+    etf_ann: w ? w.etf_ann : null, spy_ann: w ? w.spy_ann : null, rfr: w ? w.rfr_ann : null,
+    beta: beta.beta, betaInfo: beta,
+    be_cash: w ? w.be_cash : null, be_beta: w ? w.be_beta : null,
+    hedge_beta: w ? w.hedge_cost_beta : null, verdict: w ? w.verdict : null,
   });
   v.mis = isNum(v.fee) && isNum(v.theo) ? v.fee - v.theo : null;
-  if (w && isNum(v.fee) && isNum(w.be_spy)) {
-    v.headroom = w.be_spy - v.fee;
-    v.verdict = v.fee <= w.be_spy ? "go" : (isNum(w.be_profit) && v.fee <= w.be_profit ? "meh" : "no");
-  }
+  v.headroom = w && isNum(w.headroom) && w.verdict !== "low" ? w.headroom : null;
   if (w && isNum(v.fee)) {
     const pnl = -w.etf_total - (v.fee / 100) * w.a;
     v.short_ann = pnl > -1 ? Math.pow(1 + pnl, 1 / w.years) - 1 : -1;
@@ -376,16 +422,36 @@ function view(sym) {
   }
   return v;
 }
-const VERDICT = { go: "Worthwhile", meh: "Profits, trails SPY", no: "Not worthwhile" };
+const VERDICT = { go: "Worthwhile", meh: "Profits, costlier hedge than SPY", no: "Not worthwhile", low: "Low beta: not a SPY hedge" };
+function verdictNote(w) {        // [fee headroom, the same per −1.00 beta]
+  if (!w || !isNum(w.headroom) || w.verdict === "low") return [];
+  const under = w.headroom >= 0;
+  const out = [`${Math.abs(w.headroom).toFixed(1)} pts ${under ? "under" : "over"} break-even`];
+  if (isNum(w.headroom_beta)) out.push(`${Math.abs(w.headroom_beta).toFixed(1)} pts / yr per −1.00 β ${under ? "cheaper" : "costlier"} than SPY`);
+  return out;
+}
+function windowName() {
+  return { inception: "since inception", "3y": "over 3 years", "1y": "over 1 year" }[win] || `from ${customStart || "a custom date"}`;
+}
+function noWindowText(v) {
+  const r = v.r;
+  if (r.history.pending) return "Loading price history…";
+  if (r.history.error) return r.history.error;
+  if (v.werr) return v.werr;
+  if (win === "custom" && !customStart) return "Pick a start date above.";
+  if (win === "custom" && !v.raw) return "Loading…";
+  return `Not enough history for this window (since ${r.history.inception}).`;
+}
 
 // ---------- table ----------
 function sorted(list) {
   if (!sortKey) return list;
   return [...list].sort((a, b) => {
     const x = a[sortKey], y = b[sortKey];
-    if (x == null && y == null) return 0;
-    if (x == null) return 1;
-    if (y == null) return -1;
+    const xn = x == null || (typeof x === "number" && !isFinite(x)), yn = y == null || (typeof y === "number" && !isFinite(y));
+    if (xn && yn) return 0;
+    if (xn) return 1;
+    if (yn) return -1;
     if (typeof x === "string") return x.localeCompare(y) * sortDir;
     return (x - y) * sortDir;
   });
@@ -414,7 +480,7 @@ function render() {
     symTd.append(btn);
 
     if (!r) {
-      const td = tr.insertCell(); td.colSpan = 10; td.className = "note"; td.textContent = "Loading";
+      const td = tr.insertCell(); td.colSpan = 13; td.className = "note"; td.textContent = "Loading";
     } else {
       tr.insertCell().textContent = isNum(v.aum) ? "$" + compact(v.aum) : dash;
       const feeTd = tr.insertCell();
@@ -423,29 +489,49 @@ function render() {
       const sh = tr.insertCell(); sh.textContent = isNum(v.shares) ? compact(v.shares) + (v.plus ? "+" : "") : dash;
 
       const th = tr.insertCell();
-      if (r.holdings.pending) { th.textContent = "…"; th.className = "dim"; }
-      else if (r.holdings.error) { th.textContent = dash; th.className = "dim"; th.title = r.holdings.error; }
-      else { th.textContent = pctp(v.theo); if (!r.holdings.complete) th.title = "Top 10 holdings only"; }
+      const hd = r.holdings || {};
+      if (hd.pending) { th.textContent = "…"; th.className = "dim"; }
+      else if (hd.single_stock) { th.textContent = dash; th.className = "dim"; th.title = "Single stock: no holdings"; }
+      else if (hd.error) { th.textContent = dash; th.className = "dim"; th.title = hd.error; }
+      else {
+        th.textContent = pctp(v.theo);
+        if (hd.warning) { th.append(el("span", "warnline", "⚠ Top 10 only")); th.title = hd.warning; }
+        else if (hd.theo && hd.theo.pending) { th.append(el("span", "cellsub", "proxy loading")); }
+      }
 
       const mis = tr.insertCell();
-      mis.textContent = isNum(v.mis) ? `${v.mis > 0 ? "+" : ""}${v.mis.toFixed(2)}` : dash;
+      mis.textContent = isNum(v.mis) ? `${v.mis > 0 ? "+" : ""}${minus(v.mis.toFixed(2))}` : dash;
       mis.className = "mis " + (isNum(v.mis) ? (v.mis > 0.5 ? "rich" : v.mis < -0.5 ? "cheap" : "") : "dim");
 
       if (r.history.pending || r.history.error || !v.w) {
-        const td = tr.insertCell(); td.colSpan = 5; td.className = "note";
-        td.textContent = r.history.pending ? "Loading price history…" :
-          r.history.error ? r.history.error :
-          `Not enough history for this window (since ${r.history.inception}).`;
+        const td = tr.insertCell(); td.colSpan = 8; td.className = "note";
+        td.textContent = noWindowText(v);
       } else {
+        const w = v.w;
         const e = tr.insertCell(); e.textContent = signedPct(v.etf_ann); e.className = v.etf_ann < 0 ? "neg" : "pos";
+        if (w.clamped) { e.append(el("span", "cellsub", `from inception ${w.start}`)); e.title = `Starts at inception, ${w.start}; your date was earlier.`; }
         const s = tr.insertCell(); s.textContent = signedPct(v.spy_ann); s.className = "dim";
-        tr.insertCell().textContent = pctp(v.be_profit, 1);
-        const bs = tr.insertCell(); bs.textContent = pctp(v.be_spy, 1); bs.style.fontWeight = "700";
+        const rf = tr.insertCell(); rf.textContent = pctf(v.rfr, 2); rf.className = "dim";
+        if (!isNum(v.rfr)) rf.title = rfrProblem();
+        const b = tr.insertCell();
+        if (isNum(v.beta)) {
+          b.textContent = v.beta.toFixed(2) + (v.betaInfo.partial ? "*" : "");
+          b.title = `From ${v.betaInfo.days} daily returns${isNum(v.betaInfo.corr) ? `, correlation ${v.betaInfo.corr.toFixed(2)}` : ""}`;
+        } else { b.textContent = dash; b.className = "dim"; b.title = `Not enough daily history for a beta (${v.betaInfo.days || 0} days)`; }
+        const c1 = tr.insertCell(); c1.textContent = pctp(v.be_cash, 1);
+        const c2 = tr.insertCell(); c2.textContent = pctp(v.be_beta, 1); c2.style.fontWeight = "700";
+        const hc = tr.insertCell();
+        if (isNum(v.hedge_beta)) {
+          hc.textContent = signedP(v.hedge_beta);
+          hc.className = v.hedge_beta >= (w.spy_hedge_cost ?? -Infinity) ? "pos" : "neg";
+        } else { hc.textContent = dash; hc.className = "dim"; }
+        if (isNum(w.spy_hedge_cost)) hc.append(el("span", "cellsub", `SPY ${signedP(w.spy_hedge_cost)}`));
         const vd = tr.insertCell(); vd.className = "verdict-cell";
-        if (v.verdict) {
+        if (!isNum(v.rfr)) { vd.textContent = "RFR unavailable"; vd.className = "verdict-cell dim"; vd.title = rfrProblem(); }
+        else if (v.verdict) {
           vd.append(el("span", "verdict " + v.verdict, VERDICT[v.verdict]));
-          vd.append(el("span", "headroom", `${v.headroom >= 0 ? "" : "−"}${Math.abs(v.headroom).toFixed(1)} pts ${v.headroom >= 0 ? "under" : "over"} break-even`));
-        } else { vd.textContent = dash; vd.className = "dim"; }
+          for (const line of verdictNote(w)) vd.append(el("span", "headroom", line));
+        } else { vd.textContent = dash; vd.className = "verdict-cell dim"; if (!isNum(v.fee)) vd.title = "No quoted fee to compare"; }
       }
     }
     const x = tr.insertCell();
@@ -457,36 +543,74 @@ function render() {
     if (open.has(v.symbol)) body.append(detailRow(v));
   }
 }
+function rfrProblem() {
+  const s = meta.rfr || {};
+  return s.state === "error" ? s.text : s.state === "loading" ? "Loading the risk-free rate…" : "Risk-free rate unavailable";
+}
 
 function kv(dl, label, value, cls) {
   dl.append(el("dt", null, label));
   const dd = el("dd", cls, value);
   dl.append(dd);
+  return dd;
 }
 
 function detailRow(v) {
   const tr = el("tr", "detail");
-  const td = tr.insertCell(); td.colSpan = 12;
+  const td = tr.insertCell(); td.colSpan = 15;
   const r = v.r;
   if (!r) { td.textContent = "Loading"; return tr; }
   const grid = el("div", "detail-grid");
-
-  // history
-  const h = el("div");
-  const label = { inception: "since inception", "3y": "over 3 years", "1y": "over 1 year" }[win];
-  h.append(el("h3", null, `Short held ${label}`));
   const w = v.w;
+
+  // beta-adjusted calculation
+  const h = el("div");
+  h.append(el("h3", null, w ? `Short held ${w.start} to ${w.end} (${w.years.toFixed(1)} yrs)` : `Short held ${windowName()}`));
   if (!w) {
-    h.append(el("p", "note-line", r.history.pending ? "Loading price history…" : (r.history.error || "Not enough history for this window.")));
+    h.append(el("p", "note-line", noWindowText(v)));
   } else {
+    if (w.clamped) h.append(el("p", "note-line", `Starts at inception, ${w.start}; your date (${w.requested_start}) was earlier.`));
+    const dl = el("dl", "kv");
+    kv(dl, "SPY return / yr", signedPct(w.spy_ann));
+    kv(dl, "Risk-free rate / yr", isNum(w.rfr_ann) ? pctf(w.rfr_ann, 2) : "Unavailable");
+    kv(dl, "SPY hedge cost per −1.00 β", isNum(w.spy_hedge_cost) ? `${signedP(w.spy_hedge_cost)} / yr` : dash);
+    dl.append(el("div", "sep"));
+    kv(dl, `${v.symbol} return / yr`, signedPct(w.etf_ann));
+    const bi = v.betaInfo || {};
+    kv(dl, "Beta (1y daily)", isNum(bi.beta)
+      ? `${bi.beta.toFixed(2)} (correlation ${isNum(bi.corr) ? bi.corr.toFixed(2) : dash}, ${bi.days} days${bi.partial ? `: beta from ${bi.days} days` : ""})`
+      : `${dash} (${bi.days || 0} days of history)`);
+    if (isNum(v.fee) && isNum(w.etf_hedge_cost)) {
+      kv(dl, `Short at quoted fee ${pctp(v.fee)}`, isNum(bi.beta) ? `${signedP(w.etf_hedge_cost)} / yr for −${bi.beta.toFixed(2)} β` : `${signedP(w.etf_hedge_cost)} / yr`);
+    }
+    if (isNum(w.leverage) && isNum(w.hedge_cost_beta)) {
+      kv(dl, `Scaled ×${w.leverage.toFixed(2)} to −1.00 β`, `${signedP(w.hedge_cost_beta)} / yr`, w.hedge_cost_beta >= w.spy_hedge_cost ? "pos" : "neg");
+    }
+    dl.append(el("div", "sep"));
+    kv(dl, "Break-even fee: beta-adj. vs shorting SPY", isNum(w.be_beta) ? `${pctp(w.be_beta, 2)} / yr` : dash);
+    kv(dl, "Break-even fee: short profits, after RFR", isNum(w.be_cash) ? `${pctp(w.be_cash, 2)} / yr` : dash);
+    if (w.verdict) {
+      const [a, b] = verdictNote(w);
+      kv(dl, "Verdict", `${VERDICT[w.verdict]}${a ? `: ${a}` : ""}${b ? ` (${b})` : ""}`);
+    }
+    h.append(dl);
+    if (w.years < 1) h.append(el("p", "note-line", "Less than a year of history, so these break-evens are noisy."));
+  }
+  grid.append(h);
+
+  // previous method
+  const o = el("div");
+  o.append(el("h3", null, "Unadjusted (previous method)"));
+  if (w) {
     const dl = el("dl", "kv");
     kv(dl, "Dates", `${w.start} to ${w.end} (${w.years.toFixed(1)} yrs)`);
-    kv(dl, "ETF total return", signedPct(w.etf_total));
+    kv(dl, `${v.symbol} total return`, signedPct(w.etf_total));
     kv(dl, "SPY total return", signedPct(w.spy_total));
+    kv(dl, "Risk-free total return", isNum(w.rfr_total) ? signedPct(w.rfr_total) : dash);
     kv(dl, "Average short size", isNum(w.avg_size) ? `${(w.avg_size * 100).toFixed(0)}% of starting` : dash);
     dl.append(el("div", "sep"));
     kv(dl, "Break-even: short profits", pctp(w.be_profit, 1));
-    kv(dl, "Break-even: short beats SPY", pctp(w.be_spy, 1));
+    kv(dl, "Break-even: short beats owning SPY", pctp(w.be_spy, 1));
     kv(dl, "Break-even: short ETF, long SPY", pctp(w.be_hedged, 1));
     if (isNum(v.fee)) {
       dl.append(el("div", "sep"));
@@ -494,56 +618,160 @@ function detailRow(v) {
          v.short_total >= 0 ? "pos" : "neg");
       kv(dl, "SPY over the same dates", `${signedPct(w.spy_total)} total, ${signedPct(w.spy_ann)} / yr`);
     }
-    h.append(dl);
-    if (w.years < 1) h.append(el("p", "note-line", "Less than a year of history, so these break-evens are noisy."));
-  }
-  if (r.expense != null) h.append(el("p", "note-line", `Expense ratio ${pctp(r.expense)} (already reflected in its total return).`));
-  if (r.quote && isNum(r.quote.rebate)) h.append(el("p", "note-line", `IBKR rebate on short proceeds: ${pctp(r.quote.rebate)} / yr.`));
-  grid.append(h);
+    o.append(dl);
+  } else o.append(el("p", "note-line", dash));
+  if (r.expense != null) o.append(el("p", "note-line", `Expense ratio ${pctp(r.expense)} (already reflected in its total return).`));
+  if (r.quote && isNum(r.quote.rebate)) o.append(el("p", "note-line", `IBKR rebate on short proceeds: ${pctp(r.quote.rebate)} / yr.`));
+  grid.append(o);
 
-  // holdings
-  const g = el("div");
-  g.append(el("h3", null, "Theoretical fee from holdings"));
-  const hd = r.holdings;
-  if (hd.pending) g.append(el("p", "note-line", "Loading holdings…"));
-  else if (hd.error) g.append(el("p", "note-line", hd.error));
-  else {
-    const t = hd.theo;
-    const dl = el("dl", "kv");
-    const src = el("span");
-    if (hd.url) { const a = el("a", null, hd.source); a.href = hd.url; a.target = "_blank"; a.rel = "noopener"; a.style.color = "inherit"; src.append(a); }
-    else src.textContent = hd.source;
-    dl.append(el("dt", null, "Source")); const dd = el("dd"); dd.append(src); dl.append(dd);
-    kv(dl, "Holdings as of", hd.as_of || "Latest from Yahoo (date not given)");
-    if (t) {
-      kv(dl, "Holdings matched to an IBKR fee", `${t.matched} of ${t.count} (${(t.coverage * 100).toFixed(0)}% of weight)`);
-      kv(dl, "Theoretical fee", pctp(t.fee));
-      kv(dl, "Quoted fee", pctp(v.fee));
-    }
-    g.append(dl);
-    if (t && t.top.length) {
-      const tbl = el("table", "mini");
-      tbl.innerHTML = "<thead><tr><th>Holding</th><th>Weight</th><th>Borrow fee</th><th>Adds</th></tr></thead>";
-      const tb = el("tbody");
-      for (const x of t.top) {
-        const row = tb.insertRow();
-        row.insertCell().textContent = x.ticker ? `${x.ticker} · ${x.name}` : x.name;
-        row.insertCell().textContent = pctf(x.w, 2);
-        const f = row.insertCell();
-        f.textContent = isNum(x.fee) ? pctp(x.fee) : `${pctp(gc)} assumed`;
-        if (!isNum(x.fee)) f.className = "dim";
-        row.insertCell().textContent = pctp(x.contrib, 3);
-      }
-      tbl.append(tb);
-      g.append(tbl);
-      if (t.count > t.top.length) g.append(el("p", "note-line", `Largest ${t.top.length} of ${t.count} holdings shown.`));
-    }
-    for (const n of hd.notes || []) g.append(el("p", "note-line", n));
-    if (t && t.coverage < 0.5) g.append(el("p", "note-line", "Most of the weight has no IBKR fee (cash, bonds, swaps or unlisted names), so the assumed rate drives this estimate."));
-  }
-  grid.append(g);
+  grid.append(holdingsSection(v));
   td.append(grid);
   return tr;
+}
+
+// ---------- holdings ----------
+const holdKey = (sym) => `${sym}|${gc}|${cash}`;
+function loadHoldings(sym) {
+  const cur = full.get(sym);
+  if (cur && cur.key === holdKey(sym) && cur.state !== "error") return cur.promise;
+  const entry = { key: holdKey(sym), state: "loading" };
+  full.set(sym, entry);
+  entry.promise = (async () => {
+    try {
+      const url = `/api/etf/holdings?symbol=${encodeURIComponent(sym)}&gc=${encodeURIComponent(gc)}&cash=${encodeURIComponent(cash)}`;
+      const d = await (await fetch(url, { cache: "no-store" })).json();
+      if (d.error) { entry.state = "error"; entry.error = d.error; }
+      else { entry.state = "ok"; entry.data = d; }
+      if (d.pending || (d.theo && d.theo.pending)) {        // still loading on the server: ask again shortly
+        setTimeout(() => { if (full.get(sym) === entry) { full.delete(sym); if (open.has(sym)) render(); } }, 3000);
+      }
+    } catch (e) {
+      entry.state = "error"; entry.error = "Couldn't load the holdings. Retrying when you reopen this ETF.";
+    }
+    if (full.get(sym) === entry && open.has(sym)) render();
+    return entry;
+  })();
+  return entry.promise;
+}
+
+function holdingsSection(v) {
+  const r = v.r, hd = r.holdings || {};
+  const g = el("div", "detail-wide");
+  g.append(el("h3", null, "Theoretical fee from holdings"));
+  if (hd.pending) { g.append(el("p", "note-line", "Loading holdings…")); return g; }
+  if (hd.single_stock) { g.append(el("p", "note-line", "Single stock: no holdings.")); return g; }
+  if (hd.error) { g.append(el("p", "note-line", hd.error)); return g; }
+
+  const fh = full.get(v.symbol);
+  if (!fh || fh.key !== holdKey(v.symbol)) loadHoldings(v.symbol);
+  const fd = fh && fh.key === holdKey(v.symbol) && fh.state === "ok" && !fh.data.pending ? fh.data : null;
+  const t = (fd && fd.theo) || hd.theo;
+
+  if (hd.warning) g.append(el("p", "warnbox", `⚠ ${hd.warning}`));
+  const dl = el("dl", "kv");
+  const src = el("span");
+  if (hd.url) { const a = el("a", null, hd.source); a.href = hd.url; a.target = "_blank"; a.rel = "noopener"; a.style.color = "inherit"; src.append(a); }
+  else src.textContent = hd.source;
+  dl.append(el("dt", null, "Source")); const dd = el("dd"); dd.append(src); dl.append(dd);
+  kv(dl, "Holdings as of", hd.as_of || "Latest from Yahoo (date not given)");
+  if (isNum(hd.net_assets)) kv(dl, "Net assets", "$" + compact(hd.net_assets));
+  if (t) {
+    kv(dl, "Theoretical fee", `${pctp(t.fee)} / yr`);
+    kv(dl, "Quoted fee", pctp(v.fee));
+    kv(dl, "Gross long stock exposure", pctf(t.gross_long_equity, 0));
+    kv(dl, "Matched to an IBKR fee", isNum(t.coverage)
+      ? `${t.matched} of ${t.need_count} positions (${(t.coverage * 100).toFixed(1)}% of non-cash weight)` : dash);
+    kv(dl, "Cash & T-bills", pctf(t.cash_weight, 1));
+    kv(dl, "Charged an assumed rate", pctf(t.assumed_weight, 1));
+  }
+  g.append(dl);
+
+  if (t && t.by_group && t.by_group.length) {
+    const tbl = el("table", "mini groups");
+    tbl.innerHTML = "<thead><tr><th>Where the fees come from</th><th>Positions</th><th>Exposure</th><th>Adds</th></tr></thead>";
+    const tb = el("tbody");
+    for (const x of t.by_group) {
+      const row = tb.insertRow();
+      row.insertCell().textContent = x.label;
+      row.insertCell().textContent = x.count;
+      row.insertCell().textContent = pctf(x.weight, 1);
+      row.insertCell().textContent = pctp(x.contrib, 3);
+    }
+    tbl.append(tb);
+    g.append(tbl);
+  }
+
+  const rows = fd ? fd.rows : (t && t.top) || [];
+  const total = t ? t.count : rows.length;
+  const all = showAll.has(v.symbol);
+  const shown = all ? rows : rows.slice(0, 15);
+  if (shown.length) {
+    const tbl = el("table", "mini");
+    tbl.innerHTML = "<thead><tr><th>Holding</th><th>Type</th><th>Exposure</th><th>Borrow fee</th><th>How matched</th><th>Adds</th></tr></thead>";
+    const tb = el("tbody");
+    for (const x of shown) {
+      const row = tb.insertRow();
+      row.insertCell().textContent = x.ticker ? `${x.ticker} · ${x.name}` : x.name;
+      row.insertCell().textContent = x.type;
+      row.insertCell().textContent = pctf(x.exposure, 2);
+      const f = row.insertCell();
+      f.textContent = !isNum(x.fee) ? dash : x.assumed ? `${pctp(x.fee)} assumed` : pctp(x.fee);
+      if (x.assumed || !isNum(x.fee)) f.className = "dim";
+      const how = row.insertCell(); how.className = "how";
+      how.append(document.createTextNode(x.how));
+      if (x.detail) {
+        how.title = x.detail;
+        if (!["IBKR (ISIN)", "IBKR (CUSIP)", "IBKR (ticker)", "Cash & T-bills"].includes(x.how)) how.append(el("span", "cellsub", x.detail));
+      }
+      row.insertCell().textContent = pctp(x.contrib, 3);
+    }
+    tbl.append(tb);
+    g.append(tbl);
+  }
+  const tools = el("div", "holdtools");
+  if (total > 15) {
+    const tg = el("button", "quiet", all ? "Show largest 15" : `Show all ${total} holdings`);
+    tg.type = "button";
+    tg.disabled = !fd && !all;
+    if (!fd && !all) tg.textContent = `Loading all ${total} holdings…`;
+    tg.addEventListener("click", () => { all ? showAll.delete(v.symbol) : showAll.add(v.symbol); render(); });
+    tools.append(tg);
+  }
+  const dlb = el("button", "quiet", "Download holdings CSV");
+  dlb.type = "button";
+  dlb.addEventListener("click", () => downloadHoldings(v.symbol));
+  tools.append(dlb);
+  if (fh && fh.key === holdKey(v.symbol) && fh.state === "error") tools.append(el("span", "note-line", fh.error));
+  g.append(tools);
+
+  if (t && t.unmatched && t.unmatched.length) {
+    const names = t.unmatched.map(u => `${u.name} (${pctf(u.weight, 2)})`).join(", ");
+    g.append(el("p", "note-line", `Charged the assumed rate: ${names}.`));
+  }
+  for (const n of hd.notes || []) g.append(el("p", "note-line", n));
+  if (t && isNum(t.coverage) && t.coverage < 0.5) g.append(el("p", "note-line", "Less than half of the non-cash exposure matched an IBKR fee, so the assumed rate drives this estimate."));
+  return g;
+}
+
+function csvLine(cells) {
+  return cells.map(x => x == null ? "" : `"${String(x).replace(/"/g, '""')}"`).join(",");
+}
+function saveCsv(lines, name) {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([lines.join("\n")], { type: "text/csv" }));
+  a.download = name;
+  a.click(); URL.revokeObjectURL(a.href);
+}
+async function downloadHoldings(sym) {
+  const e = await loadHoldings(sym);
+  if (!e || e.state !== "ok" || !e.data.rows) { alert(e && e.error ? e.error : "Holdings aren't loaded yet. Try again in a moment."); return; }
+  const lines = [csvLine(["Holding", "Ticker", "ISIN", "CUSIP", "Type", "Asset category", "Issuer category",
+    "Exposure (% of net assets)", "Borrow fee %/yr", "Fee assumed", "How matched", "Adds %/yr", "Detail"])];
+  for (const x of e.data.rows) {
+    lines.push(csvLine([x.name, x.ticker, x.isin, x.cusip, x.type, x.cat, x.issuer_cat, isNum(x.exposure) ? x.exposure * 100 : null,
+      x.fee, x.assumed ? "yes" : "no", x.how, x.contrib, x.detail]));
+  }
+  saveCsv(lines, `${sym}-holdings-${e.data.as_of || today()}.csv`);
 }
 
 // ---------- data ----------
@@ -554,10 +782,13 @@ async function refresh() {
   if (inflight) inflight.abort();
   inflight = ctrl;
   try {
-    const url = `/api/etf?symbols=${encodeURIComponent(etfs.join(","))}&gc=${encodeURIComponent(gc)}`;
+    let url = `/api/etf?symbols=${encodeURIComponent(etfs.join(","))}&gc=${encodeURIComponent(gc)}&cash=${encodeURIComponent(cash)}`;
+    if (customStart) url += `&start=${encodeURIComponent(customStart)}`;
     const d = await (await fetch(url, { cache: "no-store", signal: ctrl.signal })).json();
     if (d.error) { setStatus({ state: "error", text: d.error }); return; }
     for (const r of d.rows) data.set(r.symbol, r);
+    meta = d;
+    $("dateError").textContent = d.start_error || "";
     setStatus(d.borrow);
     anyPending = d.pending > 0;
     $("loadHint").textContent = anyPending ? `Loading history and holdings for ${d.pending} item${d.pending > 1 ? "s" : ""}…` : "";
@@ -592,13 +823,24 @@ function addEtfs(text) {
   return msg;
 }
 function removeEtf(sym) {
-  etfs = etfs.filter(s => s !== sym); open.delete(sym);
+  etfs = etfs.filter(s => s !== sym); open.delete(sym); showAll.delete(sym);
   save(LIST_KEY, etfs); render();
 }
 function setWin(w) {
   win = w; save(WIN_KEY, w);
   document.querySelectorAll(".seg button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.win === w)));
   render();
+}
+let dateTimer = null;
+function setStart(value) {
+  const err = $("dateError");
+  if (!value) { customStart = ""; save(START_KEY, ""); err.textContent = ""; render(); return; }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) { err.textContent = "Enter the start date as YYYY-MM-DD."; return; }
+  if (value > today()) { err.textContent = "The start date is in the future. Pick a date in the past."; return; }
+  err.textContent = "";
+  customStart = value; save(START_KEY, value);
+  setWin("custom");
+  clearTimeout(dateTimer); dateTimer = setTimeout(refresh, 500);
 }
 
 $("addForm").addEventListener("submit", (e) => {
@@ -609,14 +851,25 @@ $("addForm").addEventListener("submit", (e) => {
 });
 $("clearBtn").addEventListener("click", () => { etfs = []; save(LIST_KEY, etfs); render(); });
 $("resetBtn").addEventListener("click", () => { etfs = [...config.default_etfs]; save(LIST_KEY, etfs); render(); refresh(); });
-document.querySelectorAll(".seg button").forEach(b => b.addEventListener("click", () => setWin(b.dataset.win)));
-let gcTimer = null;
-$("gc").addEventListener("input", () => {
-  const v = parseFloat($("gc").value);
-  if (!isFinite(v) || v < 0 || v > 100) return;
-  gc = v; save(GC_KEY, String(v));
-  clearTimeout(gcTimer); gcTimer = setTimeout(refresh, 400);
-});
+document.querySelectorAll(".seg button").forEach(b => b.addEventListener("click", () => {
+  setWin(b.dataset.win);
+  if (b.dataset.win === "custom" && !customStart) {
+    const d = $("startDate"); d.focus();
+    try { d.showPicker(); } catch {}
+  }
+}));
+$("startDate").addEventListener("change", () => setStart($("startDate").value));
+function rateInput(id, key, set) {
+  let t = null;
+  $(id).addEventListener("input", () => {
+    const v = parseFloat($(id).value);
+    if (!isFinite(v) || v < 0 || v > 100) return;
+    set(v); save(key, String(v));
+    clearTimeout(t); t = setTimeout(refresh, 400);
+  });
+}
+rateInput("gc", GC_KEY, (v) => { gc = v; });
+rateInput("cash", CASH_KEY, (v) => { cash = v; });
 document.querySelectorAll("#etfTable th.sortable").forEach(th => {
   th.querySelector("button").addEventListener("click", () => {
     const k = th.dataset.key;
@@ -628,21 +881,28 @@ document.querySelectorAll("#etfTable th.sortable").forEach(th => {
 });
 $("csvBtn").addEventListener("click", () => {
   const head = ["ETF", "Name", "AUM", "Quoted fee %/yr", "Shares available", "Theoretical fee %/yr",
-    "Quoted minus theoretical (pts)", "Holdings source", "Holdings as of", "Holdings coverage",
-    "Window", "Start", "End", "ETF total return", "SPY total return", "ETF return /yr", "SPY return /yr",
-    "Break-even fee: profit %/yr", "Break-even fee: beat SPY %/yr", "Break-even fee: hedged %/yr", "Verdict"];
-  const q = (x) => x == null ? "" : `"${String(x).replace(/"/g, '""')}"`;
-  const lines = [head.map(q).join(",")];
+    "Quoted minus theoretical (pts)", "Holdings source", "Holdings as of", "Holdings matched (% of non-cash weight)",
+    "Gross long stock exposure", "Cash & T-bills weight", "Assumed-rate weight",
+    "Window", "Requested start", "Start", "End", "Started at inception instead", "ETF total return", "SPY total return",
+    "ETF return /yr", "SPY return /yr", "RFR total", "RFR /yr", "Beta (1y daily)", "Beta days", "Correlation",
+    "Break-even fee: short profits after RFR %/yr", "Break-even fee: beta-adj. vs shorting SPY %/yr",
+    "SPY hedge cost per -1.00 beta %/yr", "ETF hedge cost at quoted fee %/yr", "Leverage to -1.00 beta",
+    "ETF hedge cost per -1.00 beta %/yr", "Headroom (pts of fee)", "Headroom per -1.00 beta (pts/yr)", "Verdict",
+    "Previous method: break-even profit %/yr", "Previous method: break-even beat owning SPY %/yr", "Previous method: break-even short ETF long SPY %/yr"];
+  const lines = [csvLine(head)];
+  const dates = new Set();
   for (const v of etfs.map(view)) {
-    const w = v.w || {}, hd = (v.r && v.r.holdings) || {}, t = hd.theo || {};
-    lines.push([v.symbol, v.name, v.aum, v.fee, v.shares, v.theo, v.mis, hd.source, hd.as_of, t.coverage,
-      win, w.start, w.end, w.etf_total, w.spy_total, w.etf_ann, w.spy_ann, w.be_profit, w.be_spy, w.be_hedged,
-      VERDICT[v.verdict]].map(q).join(","));
+    const w = v.w || {}, hd = (v.r && v.r.holdings) || {}, t = hd.theo || {}, b = v.betaInfo || {};
+    if (v.w) dates.add(`${w.start}-to-${w.end}`);
+    lines.push(csvLine([v.symbol, v.name, v.aum, v.fee, v.shares, v.theo, v.mis, hd.source, hd.as_of,
+      isNum(t.coverage) ? t.coverage * 100 : null, t.gross_long_equity, t.cash_weight, t.assumed_weight,
+      win === "custom" ? `custom from ${customStart}` : win, w.requested_start, w.start, w.end, w.clamped ? "yes" : "",
+      w.etf_total, w.spy_total, w.etf_ann, w.spy_ann, w.rfr_total, w.rfr_ann, b.beta, b.days, b.corr,
+      w.be_cash, w.be_beta, w.spy_hedge_cost, w.etf_hedge_cost, w.leverage, w.hedge_cost_beta, w.headroom, w.headroom_beta,
+      v.werr || VERDICT[v.verdict], w.be_profit, w.be_spy, w.be_hedged]));
   }
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(new Blob([lines.join("\n")], { type: "text/csv" }));
-  a.download = `etf-short-screen-${win}-${new Date().toISOString().slice(0, 10)}.csv`;
-  a.click(); URL.revokeObjectURL(a.href);
+  const span = dates.size === 1 ? [...dates][0] : (win === "custom" ? `from-${customStart}` : today());
+  saveCsv(lines, `etf-short-screen-${win}-${span}.csv`);
 });
 
 (async function start() {
@@ -653,8 +913,15 @@ $("csvBtn").addEventListener("click", () => {
   const g = parseFloat(load(GC_KEY));
   gc = isFinite(g) ? g : (config.gc_default ?? 0.25);
   $("gc").value = gc;
+  const c = parseFloat(load(CASH_KEY));
+  cash = isFinite(c) ? c : (config.cash_default ?? 0);
+  $("cash").value = cash;
+  const st = load(START_KEY) || "";
+  customStart = /^\d{4}-\d{2}-\d{2}$/.test(st) ? st : "";
+  $("startDate").value = customStart;
+  $("startDate").max = today();
   const w = load(WIN_KEY);
-  setWin(["inception", "3y", "1y"].includes(w) ? w : "inception");
+  setWin(WINDOWS.includes(w) ? w : "inception");
   refresh();
 })();
 </script>
