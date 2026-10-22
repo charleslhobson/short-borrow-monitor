@@ -97,17 +97,24 @@ Paste your ETF list into the box (single stocks work too) and each one gets a ro
 - **Window.** Since inception, 3 years, 1 year, or **Custom** with a date picker for
   any start date. A date before the ETF existed starts at its inception (the page says
   so), and a weekend or holiday moves to the next trading day.
-- **Returns, risk-free rate and beta.** Annualized total returns for the ETF and SPY
-  over the window, the T-bill rate over the same dates (Yahoo `^IRX`, or FRED's
-  3-month bill rate as a fallback), and the ETF's beta to SPY from the last year of
-  daily returns.
-- **Beta-adjusted break-even fees.** A short earns the risk-free rate on its proceeds,
-  so shorting SPY costs `RFR − SPY return` a year per −1.00 beta. Shorting the ETF at
-  fee `f`, levered to −1.00 beta, costs `(RFR − ETF return − f) ÷ beta`.
-  - *Short profits, after RFR:* `f = RFR − ETF return`.
-  - *Beta-adjusted vs shorting SPY:* `f = beta × (SPY return − RFR) − (ETF return − RFR)`.
-  - Example: SPY +10%, RFR 4% → SPY costs −6% per −1.00 beta. An ETF with beta 0.2
-    returning +5% costs −1% at no fee, −5% levered ×5, so its break-even fee is 0.2%.
+- **Returns and the cash rate.** Annualized total returns for the ETF and SPY over the
+  window, and the **cash rate** short proceeds earn over the same dates: the T-bill
+  rate (Yahoo `^IRX`, or FRED's 3-month bill rate as a fallback) minus the spread you
+  set (**Interest on short proceeds**, default 1%), never below zero on any day.
+- **Beta, two ways.** This window's beta (from returns over the same dates) is used in
+  the break-even fees and the verdict. Last year's beta is shown for sizing a hedge
+  today: short 1 ÷ beta dollars of the ETF for each dollar of SPY. "β changed" flags
+  when they differ by more than 25%. Funds whose stocks mostly trade outside the US
+  use weekly returns for both, because daily returns understate their beta.
+- **Beta-adjusted break-even fees.** With cash rate `r`, shorting SPY costs
+  `r − SPY return` a year per −1.00 beta. Shorting the ETF at fee `f`, scaled to
+  −1.00 beta, costs `(r − ETF return − f) ÷ beta` (the interest scales too).
+  - *Short profits, after the cash rate:* `f = r − ETF return`.
+  - *Beta-adjusted vs shorting SPY:* `f = beta × (SPY return − r) − (ETF return − r)`.
+  - Example: SPY +10%, T-bill 4%, spread 1% → cash 3%, SPY costs −7% per −1.00 beta.
+    An ETF with beta 0.2 returning +5% costs −2% at no fee, −10% levered ×5, so its
+    break-even fee is 0.2 × 7% − 2% = −0.6%: not worthwhile at any fee. With no
+    spread it would be +0.2%.
 - **Hedge cost per −1.00 beta** at the quoted fee, next to SPY's.
 - **Verdict.** Worthwhile when the quoted fee is at or under the beta-adjusted
   break-even. Betas under 0.1 are marked "Low beta: not a SPY hedge".
@@ -151,6 +158,8 @@ of" date in each ETF's details can be a few months old.
 - `DEFAULT_ETFS`: the starting list for new visitors.
 - `GC_RATE`: the starting "fee for unmatched holdings" (default `0.25`).
 - `CASH_RATE`: the starting "fee for cash & T-bills" (default `0`).
+- `RFR_SPREAD`: the starting spread below the T-bill rate for interest on short
+  proceeds (default `1.0`, % per year).
 
 ### Checking the holdings match
 

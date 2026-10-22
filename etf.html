@@ -276,6 +276,9 @@
     <label for="gc">Fee for unmatched holdings
       <input id="gc" type="number" min="0" max="100" step="0.05" inputmode="decimal"> % / yr
     </label>
+    <label for="spread">Interest on short proceeds: T-bill rate minus
+      <input id="spread" type="number" min="0" max="10" step="0.05" inputmode="decimal"> % / yr
+    </label>
     <label for="cash">Fee for cash &amp; T-bills
       <input id="cash" type="number" min="0" max="100" step="0.05" inputmode="decimal"> % / yr
     </label>
@@ -296,9 +299,9 @@
           <th class="sortable" data-key="mis"><button type="button">Gap<span class="sub2">quoted − theo, pts</span></button></th>
           <th class="sortable" data-key="etf_ann"><button type="button">ETF return<span class="sub2">total, / yr</span></button></th>
           <th class="sortable" data-key="spy_ann"><button type="button">SPY return<span class="sub2">same dates, / yr</span></button></th>
-          <th class="sortable" data-key="rfr"><button type="button">RFR<span class="sub2">same dates, / yr</span></button></th>
-          <th class="sortable" data-key="beta"><button type="button">Beta<span class="sub2">vs SPY, 1y daily</span></button></th>
-          <th class="sortable" data-key="be_cash"><button type="button">Break-even fee<span class="sub2">short profits, after RFR</span></button></th>
+          <th class="sortable" data-key="rfr"><button type="button">Cash rate<span class="sub2">T-bill − spread, / yr</span></button></th>
+          <th class="sortable" data-key="beta"><button type="button">Beta<span class="sub2">vs SPY, this window</span></button></th>
+          <th class="sortable" data-key="be_cash"><button type="button">Break-even fee<span class="sub2">short profits, after cash rate</span></button></th>
           <th class="sortable" data-key="be_beta"><button type="button">Break-even fee<span class="sub2">beta-adj. vs shorting SPY</span></button></th>
           <th class="sortable" data-key="hedge_beta"><button type="button">Hedge cost<span class="sub2">per −1.00 β, quoted fee</span></button></th>
           <th class="sortable" data-key="headroom"><button type="button">Verdict</button></th>
@@ -318,14 +321,20 @@
 
   <section class="method" aria-labelledby="methodTitle">
     <h2 id="methodTitle">How the numbers are calculated</h2>
-    <p><strong>Returns, risk-free rate and beta.</strong> The ETF is shorted at the first close of the window (since inception, 3 years, 1 year, or from the date you pick, moved to the first trading day on or after it) and held to the latest close, using Yahoo's dividend-adjusted (total return) prices. <code>R_X</code> and <code>R_SPY</code> are the ETF's and SPY's annualized returns over those dates. <code>RFR</code> is the 13-week Treasury bill yield (Yahoo <code>^IRX</code>, or FRED's 3-month bill rate if Yahoo has none), accrued every day on actual/360 over the same dates and annualized the same way. Beta is the ETF's beta to SPY from the last year of daily returns (covariance ÷ variance, on days both traded), whatever window is selected; with 60–119 days of history it's marked with *, and with fewer there's no beta.</p>
-    <p><strong>Break-even fees.</strong> A short earns the risk-free rate on its proceeds, so shorting SPY gives −1.00 beta at a hedge cost of <code>RFR − R_SPY</code> a year. Shorting the ETF at fee <code>f</code> gives −β at <code>RFR − R_X − f</code>; levered up to −1.00 beta (× 1/β), that's <code>(RFR − R_X − f) ÷ β</code>.</p>
+    <p><strong>Returns and the cash rate.</strong> The ETF is shorted at the first close of the window (since inception, 3 years, 1 year, or from the date you pick, moved to the first trading day on or after it) and held to the latest close, using Yahoo's dividend-adjusted (total return) prices. <code>R_X</code> and <code>R_SPY</code> are the ETF's and SPY's annualized returns over those dates. The cash from a short earns interest, but brokers pay less than the T-bill rate (IBKR pays its benchmark minus a spread, and nothing on small accounts). So the <strong>cash rate</strong> <code>r</code> is the 13-week Treasury bill yield (Yahoo <code>^IRX</code>, or FRED's 3-month bill rate if Yahoo has none) minus the spread you set above, accrued every day on actual/360 over the same dates and annualized the same way. It never goes below zero: on days when the T-bill rate was under the spread (most of 2009–2015, for example), cash earns 0%.</p>
+    <p><strong>Beta.</strong> Two betas to SPY (covariance ÷ variance of returns, on days both traded):</p>
     <ul>
-      <li><strong>Short profits, after RFR:</strong> <code>f = RFR − R_X</code>. Levering up doesn't move where profit crosses zero, so beta doesn't enter.</li>
-      <li><strong>Beta-adjusted vs shorting SPY:</strong> <code>f = β × (R_SPY − RFR) − (R_X − RFR)</code>, the fee at which the levered short costs the same per unit of beta as shorting SPY.</li>
+      <li><strong>This window's beta</strong>, from returns over the same dates as the returns and cash rate above. It's used in the break-even fees, the hedge cost per −1.00 beta and the verdict, because they ask how this short did as a hedge over those dates. It needs at least 60 daily (26 weekly) returns; a shorter window uses last year's beta instead.</li>
+      <li><strong>Last year's beta</strong>, for sizing a hedge today: to get −1.00 beta now, short 1 ÷ beta dollars of the ETF for each dollar of SPY you'd otherwise short.</li>
     </ul>
-    <p>Example: SPY +10% a year and RFR 4%, so shorting SPY costs −6% a year per −1.00 beta. An ETF with beta 0.2 returning +5% costs −1% a year at no fee, or −5% levered ×5, 1 point cheaper than SPY. Its break-even fee is 0.2 × 6% − 1% = 0.2% a year.</p>
-    <p><strong>Verdict.</strong> Worthwhile: the quoted fee is at or below the beta-adjusted break-even. Profits, costlier hedge than SPY: below the short-profits break-even only. Not worthwhile: above both. Betas under 0.1 (or no beta) aren't treated as a SPY hedge. Each ETF's details also show the previous, unadjusted break-evens, which charge borrow daily on the short's current value (360-day year): short profits <code>−R ÷ A</code>, short beats owning SPY <code>(−R − R_SPY) ÷ A</code> and short ETF / long SPY <code>(R_SPY − R) ÷ A</code>, where <code>A</code> is the sum of the short's value relative to its start × days ÷ 360. Margin costs, IBKR's spread on interest, recalls and fee changes are left out.</p>
+    <p>"β changed" means the two differ by more than 25%, so the past comparison may not hold going forward. Betas from fewer than 120 daily (52 weekly) returns are marked with *. For funds where more than half of the stocks trade outside the US, both betas use weekly (Friday-to-Friday) returns: those markets close before the US does, so daily returns miss part of each day's move and understate beta.</p>
+    <p><strong>Break-even fees.</strong> Shorting SPY gives −1.00 beta at a hedge cost of <code>r − R_SPY</code> a year. Shorting the ETF at fee <code>f</code> gives −β at <code>r − R_X − f</code>; scaled to −1.00 beta (× 1/β, which also scales the interest earned on the proceeds), that's <code>(r − R_X − f) ÷ β</code>.</p>
+    <ul>
+      <li><strong>Short profits, after the cash rate:</strong> <code>f = r − R_X</code>. Scaling the short doesn't move where profit crosses zero, so beta doesn't enter.</li>
+      <li><strong>Beta-adjusted vs shorting SPY:</strong> <code>f = β × (R_SPY − r) − (R_X − r)</code>, the fee at which the scaled short costs the same per unit of beta as shorting SPY.</li>
+    </ul>
+    <p>Example: SPY +10% a year, T-bill rate 4% and a 1% spread, so cash earns 3% and shorting SPY costs −7% a year per −1.00 beta. An ETF with beta 0.2 returning +5% costs −2% a year at no fee, or −10% levered ×5, 3 points worse than SPY. Its break-even fee is 0.2 × 7% − 2% = −0.6% a year, so it isn't worthwhile at any fee. With no spread (cash at 4%) the same ETF breaks even at +0.2%: the spread matters most for low-beta ETFs, whose scaled-up short relies on more interest. High-beta ETFs move the other way, because their scaled-down short needs less cash than shorting SPY.</p>
+    <p><strong>Verdict.</strong> Worthwhile: the quoted fee is at or below the beta-adjusted break-even. Profits, costlier hedge than SPY: below the short-profits break-even only. Not worthwhile: above both. Betas under 0.1 (or no beta) aren't treated as a SPY hedge. Each ETF's details also show the previous, unadjusted break-evens, which charge borrow daily on the short's current value (360-day year): short profits <code>−R ÷ A</code>, short beats owning SPY <code>(−R − R_SPY) ÷ A</code> and short ETF / long SPY <code>(R_SPY − R) ÷ A</code>, where <code>A</code> is the sum of the short's value relative to its start × days ÷ 360. Margin costs, recalls and fee changes are left out.</p>
     <p><strong>Theoretical fee.</strong> Every position in the ETF's latest holdings report, weighted by its exposure as a share of net assets (not re-scaled to 100%), times its borrow fee, summed:</p>
     <ul>
       <li><strong>Stocks and ETFs:</strong> the IBKR fee, matched by ISIN, CUSIP, ticker, IBKR's non-US country files, or as a last resort a unique exact company-name match.</li>
@@ -341,11 +350,11 @@
 
 <script>
 const $ = (id) => document.getElementById(id);
-const LIST_KEY = "sbm.etfs.v1", GC_KEY = "sbm.etf.gc.v1", WIN_KEY = "sbm.etf.win.v1";
+const LIST_KEY = "sbm.etfs.v1", GC_KEY = "sbm.etf.gc.v1", WIN_KEY = "sbm.etf.win.v1", SPREAD_KEY = "sbm.etf.spread.v1";
 const CASH_KEY = "sbm.etf.cash.v1", START_KEY = "sbm.etf.start.v1";
 const WINDOWS = ["inception", "3y", "1y", "custom"];
 let config = { default_etfs: [], gc_default: 0.25, cash_default: 0 };
-let etfs = [], gc = 0.25, cash = 0, win = "inception", customStart = "";
+let etfs = [], gc = 0.25, cash = 0, spread = 1, win = "inception", customStart = "";
 let data = new Map();           // symbol -> server row
 let meta = {};                  // top-level response fields (rfr state, start error...)
 let borrowState = null, anyPending = false;
@@ -406,13 +415,14 @@ function view(sym) {
   const w = raw && !raw.error ? raw : null;
   const q = r.quote || {};
   const theo = r.holdings && r.holdings.theo ? r.holdings.theo : null;
-  const beta = h.beta || {};
+  const beta1y = h.beta || {};
   Object.assign(v, {
     name: r.name || q.name, aum: r.aum, fee: q.fee, shares: q.shares, plus: q.plus,
     price: r.price, avail_value: r.avail_value,
     theo: theo ? theo.fee : null, w, werr: raw && raw.error ? raw.error : null, raw,
     etf_ann: w ? w.etf_ann : null, spy_ann: w ? w.spy_ann : null, rfr: w ? w.rfr_ann : null,
-    beta: beta.beta, betaInfo: beta,
+    beta: w ? w.beta_used : null, betaInfo: (w && w.beta_window) || {},
+    beta1y: beta1y.beta, beta1yInfo: beta1y, betaChanged: !!(w && w.beta_changed),
     be_cash: w ? w.be_cash : null, be_beta: w ? w.be_beta : null,
     hedge_beta: w ? w.hedge_cost_beta : null, verdict: w ? w.verdict : null,
   });
@@ -527,12 +537,15 @@ function render() {
         if (w.clamped) { e.append(el("span", "cellsub", `from inception ${w.start}`)); e.title = `Starts at inception, ${w.start}; your date was earlier.`; }
         const s = tr.insertCell(); s.textContent = signedPct(v.spy_ann); s.className = "dim";
         const rf = tr.insertCell(); rf.textContent = pctf(v.rfr, 2); rf.className = "dim";
-        if (!isNum(v.rfr)) rf.title = rfrProblem();
+        rf.title = isNum(v.rfr) ? cashRateText(w) : rfrProblem();
         const b = tr.insertCell();
         if (isNum(v.beta)) {
-          b.textContent = v.beta.toFixed(2) + (v.betaInfo.partial ? "*" : "");
-          b.title = `From ${v.betaInfo.days} daily returns${isNum(v.betaInfo.corr) ? `, correlation ${v.betaInfo.corr.toFixed(2)}` : ""}`;
-        } else { b.textContent = dash; b.className = "dim"; b.title = `Not enough daily history for a beta (${v.betaInfo.days || 0} days)`; }
+          b.append(el("strong", null, v.beta.toFixed(2) + (v.betaInfo.partial ? "*" : "")));
+          if (v.betaInfo.freq === "weekly") b.append(el("span", "cellsub", "weekly"));
+          if (isNum(v.beta1y)) b.append(el("span", "cellsub", `1y: ${v.beta1y.toFixed(2)}`));
+          if (v.betaChanged) b.append(el("span", "warnline", "β changed"));
+          b.title = betaText(v);
+        } else { b.textContent = dash; b.className = "dim"; b.title = `Not enough history for a beta (${v.betaInfo.days || 0} returns)`; }
         const c1 = tr.insertCell(); c1.textContent = pctp(v.be_cash, 1);
         const c2 = tr.insertCell(); c2.textContent = pctp(v.be_beta, 1); c2.style.fontWeight = "700";
         const hc = tr.insertCell();
@@ -542,7 +555,10 @@ function render() {
         } else { hc.textContent = dash; hc.className = "dim"; }
         if (isNum(w.spy_hedge_cost)) hc.append(el("span", "cellsub", `SPY ${signedP(w.spy_hedge_cost)}`));
         const vd = tr.insertCell(); vd.className = "verdict-cell";
-        if (!isNum(v.rfr)) { vd.textContent = "RFR unavailable"; vd.className = "verdict-cell dim"; vd.title = rfrProblem(); }
+        if (!isNum(v.rfr)) {
+          vd.textContent = (meta.rfr || {}).state === "loading" ? "Loading…" : "T-bill rate unavailable";
+          vd.className = "verdict-cell dim"; vd.title = rfrProblem();
+        }
         else if (v.verdict) {
           vd.append(el("span", "verdict " + v.verdict, VERDICT[v.verdict]));
           for (const line of verdictNote(w)) vd.append(el("span", "headroom", line));
@@ -557,6 +573,23 @@ function render() {
 
     if (open.has(v.symbol)) body.append(detailRow(v));
   }
+}
+function betaLine(bi) {
+  if (!isNum(bi.beta)) return dash;
+  const dates = bi.start ? `, ${bi.start} to ${bi.end}` : "";
+  return `${bi.beta.toFixed(2)} (${bi.freq || "daily"}, ${(bi.days || 0).toLocaleString()} returns${dates}, correlation ${isNum(bi.corr) ? bi.corr.toFixed(2) : dash})`;
+}
+function betaText(v) {
+  const lines = [`This window: β ${betaLine(v.betaInfo)}`, `Last year: β ${betaLine(v.beta1yInfo)}`];
+  if (v.betaInfo.note) lines.push(v.betaInfo.note + ".");
+  if (v.betaChanged) lines.push("The window's beta and last year's differ by more than 25%, so the past comparison may not hold going forward.");
+  return lines.join("\n");
+}
+function cashRateText(w) {
+  if (!w || !isNum(w.rfr_ann)) return rfrProblem();
+  let t = `T-bill ${pctf(w.tbill_ann, 2)} − spread ${pctp(w.spread, 2)} = ${pctf(w.rfr_ann, 2)} a year earned on short proceeds`;
+  if (w.floor_days) t += `. On ${w.floor_days.toLocaleString()} days the T-bill rate was below the spread, so cash earned 0% then.`;
+  return t;
 }
 function rfrProblem() {
   const s = meta.rfr || {};
@@ -587,28 +620,38 @@ function detailRow(v) {
     if (w.clamped) h.append(el("p", "note-line", `Starts at inception, ${w.start}; your date (${w.requested_start}) was earlier.`));
     const dl = el("dl", "kv");
     kv(dl, "SPY return / yr", signedPct(w.spy_ann));
-    kv(dl, "Risk-free rate / yr", isNum(w.rfr_ann) ? pctf(w.rfr_ann, 2) : "Unavailable");
+    if (isNum(w.rfr_ann)) {
+      kv(dl, "T-bill rate / yr", pctf(w.tbill_ann, 2));
+      kv(dl, "minus spread", pctp(w.spread, 2));
+      kv(dl, "= cash rate / yr (earned on short proceeds)", pctf(w.rfr_ann, 2));
+    } else kv(dl, "Cash rate / yr", "Unavailable");
     kv(dl, "SPY hedge cost per −1.00 β", isNum(w.spy_hedge_cost) ? `${signedP(w.spy_hedge_cost)} / yr` : dash);
     dl.append(el("div", "sep"));
     kv(dl, `${v.symbol} return / yr`, signedPct(w.etf_ann));
     const bi = v.betaInfo || {};
-    kv(dl, "Beta (1y daily)", isNum(bi.beta)
-      ? `${bi.beta.toFixed(2)} (correlation ${isNum(bi.corr) ? bi.corr.toFixed(2) : dash}, ${bi.days} days${bi.partial ? `: beta from ${bi.days} days` : ""})`
-      : `${dash} (${bi.days || 0} days of history)`);
+    kv(dl, "Beta, this window (used here)", betaLine(bi));
+    kv(dl, "Beta, last year (for sizing a hedge today)", betaLine(v.beta1yInfo || {}));
+    if (isNum(v.beta1y) && v.beta1y >= 0.1) {
+      kv(dl, "To get −1.00 β today", `short $${(1 / v.beta1y).toFixed(2)} of ${v.symbol} for each $1 of SPY you'd otherwise short`);
+    }
     if (isNum(v.fee) && isNum(w.etf_hedge_cost)) {
-      kv(dl, `Short at quoted fee ${pctp(v.fee)}`, isNum(bi.beta) ? `${signedP(w.etf_hedge_cost)} / yr for −${bi.beta.toFixed(2)} β` : `${signedP(w.etf_hedge_cost)} / yr`);
+      kv(dl, `Short at quoted fee ${pctp(v.fee)}`, isNum(v.beta) ? `${signedP(w.etf_hedge_cost)} / yr for −${v.beta.toFixed(2)} β` : `${signedP(w.etf_hedge_cost)} / yr`);
     }
     if (isNum(w.leverage) && isNum(w.hedge_cost_beta)) {
       kv(dl, `Scaled ×${w.leverage.toFixed(2)} to −1.00 β`, `${signedP(w.hedge_cost_beta)} / yr`, w.hedge_cost_beta >= w.spy_hedge_cost ? "pos" : "neg");
     }
     dl.append(el("div", "sep"));
     kv(dl, "Break-even fee: beta-adj. vs shorting SPY", isNum(w.be_beta) ? `${pctp(w.be_beta, 2)} / yr` : dash);
-    kv(dl, "Break-even fee: short profits, after RFR", isNum(w.be_cash) ? `${pctp(w.be_cash, 2)} / yr` : dash);
+    kv(dl, "Break-even fee: short profits, after cash rate", isNum(w.be_cash) ? `${pctp(w.be_cash, 2)} / yr` : dash);
     if (w.verdict) {
       const [a, b] = verdictNote(w);
       kv(dl, "Verdict", `${VERDICT[w.verdict]}${a ? `: ${a}` : ""}${b ? ` (${b})` : ""}`);
     }
     h.append(dl);
+    if (bi.note) h.append(el("p", "note-line", bi.note + "."));
+    if (v.betaChanged) h.append(el("p", "warnbox", `⚠ β changed: ${v.beta.toFixed(2)} over this window vs ${v.beta1y.toFixed(2)} over the last year. The past comparison may not hold going forward.`));
+    if (bi.freq === "weekly") h.append(el("p", "note-line", "Weekly returns are used because most of this fund's stocks trade outside the US, whose markets close before the US does."));
+    if (w.floor_days) h.append(el("p", "note-line", `On ${w.floor_days.toLocaleString()} days in this window the T-bill rate was below the spread, so cash earned 0% on those days.`));
     if (w.years < 1) h.append(el("p", "note-line", "Less than a year of history, so these break-evens are noisy."));
   }
   grid.append(h);
@@ -621,7 +664,7 @@ function detailRow(v) {
     kv(dl, "Dates", `${w.start} to ${w.end} (${w.years.toFixed(1)} yrs)`);
     kv(dl, `${v.symbol} total return`, signedPct(w.etf_total));
     kv(dl, "SPY total return", signedPct(w.spy_total));
-    kv(dl, "Risk-free total return", isNum(w.rfr_total) ? signedPct(w.rfr_total) : dash);
+    kv(dl, "Cash earned on proceeds, total", isNum(w.rfr_total) ? signedPct(w.rfr_total) : dash);
     kv(dl, "Average short size", isNum(w.avg_size) ? `${(w.avg_size * 100).toFixed(0)}% of starting` : dash);
     dl.append(el("div", "sep"));
     kv(dl, "Break-even: short profits", pctp(w.be_profit, 1));
@@ -797,7 +840,7 @@ async function refresh() {
   if (inflight) inflight.abort();
   inflight = ctrl;
   try {
-    let url = `/api/etf?symbols=${encodeURIComponent(etfs.join(","))}&gc=${encodeURIComponent(gc)}&cash=${encodeURIComponent(cash)}`;
+    let url = `/api/etf?symbols=${encodeURIComponent(etfs.join(","))}&gc=${encodeURIComponent(gc)}&cash=${encodeURIComponent(cash)}&spread=${encodeURIComponent(spread)}`;
     if (customStart) url += `&start=${encodeURIComponent(customStart)}`;
     const d = await (await fetch(url, { cache: "no-store", signal: ctrl.signal })).json();
     if (d.error) { setStatus({ state: "error", text: d.error }); return; }
@@ -874,17 +917,18 @@ document.querySelectorAll(".seg button").forEach(b => b.addEventListener("click"
   }
 }));
 $("startDate").addEventListener("change", () => setStart($("startDate").value));
-function rateInput(id, key, set) {
+function rateInput(id, key, set, max = 100) {
   let t = null;
   $(id).addEventListener("input", () => {
     const v = parseFloat($(id).value);
-    if (!isFinite(v) || v < 0 || v > 100) return;
+    if (!isFinite(v) || v < 0 || v > max) return;
     set(v); save(key, String(v));
     clearTimeout(t); t = setTimeout(refresh, 400);
   });
 }
 rateInput("gc", GC_KEY, (v) => { gc = v; });
 rateInput("cash", CASH_KEY, (v) => { cash = v; });
+rateInput("spread", SPREAD_KEY, (v) => { spread = v; }, 10);
 document.querySelectorAll("#etfTable th.sortable").forEach(th => {
   th.querySelector("button").addEventListener("click", () => {
     const k = th.dataset.key;
@@ -900,21 +944,26 @@ $("csvBtn").addEventListener("click", () => {
     "Quoted minus theoretical (pts)", "Holdings source", "Holdings as of", "Holdings matched (% of non-cash weight)",
     "Gross long stock exposure", "Cash & T-bills weight", "Assumed-rate weight",
     "Window", "Requested start", "Start", "End", "Started at inception instead", "ETF total return", "SPY total return",
-    "ETF return /yr", "SPY return /yr", "RFR total", "RFR /yr", "Beta (1y daily)", "Beta days", "Correlation",
-    "Break-even fee: short profits after RFR %/yr", "Break-even fee: beta-adj. vs shorting SPY %/yr",
+    "ETF return /yr", "SPY return /yr", "T-bill rate /yr", "Spread %/yr", "Cash rate /yr", "Cash rate total",
+    "Days cash earned 0%", "Beta (this window)", "Beta (window) frequency", "Beta (window) returns",
+    "Beta (window) correlation", "Beta (window) fell back to last year", "Beta (last year)",
+    "Beta (last year) frequency", "Beta (last year) returns", "Beta (last year) correlation", "Beta changed flag",
+    "Break-even fee: short profits after cash rate %/yr", "Break-even fee: beta-adj. vs shorting SPY %/yr",
     "SPY hedge cost per -1.00 beta %/yr", "ETF hedge cost at quoted fee %/yr", "Leverage to -1.00 beta",
     "ETF hedge cost per -1.00 beta %/yr", "Headroom (pts of fee)", "Headroom per -1.00 beta (pts/yr)", "Verdict",
     "Previous method: break-even profit %/yr", "Previous method: break-even beat owning SPY %/yr", "Previous method: break-even short ETF long SPY %/yr"];
   const lines = [csvLine(head)];
   const dates = new Set();
   for (const v of etfs.map(view)) {
-    const w = v.w || {}, hd = (v.r && v.r.holdings) || {}, t = hd.theo || {}, b = v.betaInfo || {};
+    const w = v.w || {}, hd = (v.r && v.r.holdings) || {}, t = hd.theo || {}, b = v.betaInfo || {}, b1 = v.beta1yInfo || {};
     if (v.w) dates.add(`${w.start}-to-${w.end}`);
     lines.push(csvLine([v.symbol, v.name, v.aum, v.price, v.r && v.r.price_src === "close" ? `last close ${v.r.last_date}` : (v.r && v.r.price_src) || "",
       v.fee, v.shares, v.avail_value, v.theo, v.mis, hd.source, hd.as_of,
       isNum(t.coverage) ? t.coverage * 100 : null, t.gross_long_equity, t.cash_weight, t.assumed_weight,
       win === "custom" ? `custom from ${customStart}` : win, w.requested_start, w.start, w.end, w.clamped ? "yes" : "",
-      w.etf_total, w.spy_total, w.etf_ann, w.spy_ann, w.rfr_total, w.rfr_ann, b.beta, b.days, b.corr,
+      w.etf_total, w.spy_total, w.etf_ann, w.spy_ann, w.tbill_ann, w.spread, w.rfr_ann, w.rfr_total, w.floor_days,
+      b.beta, b.freq, b.days, b.corr, b.fallback ? "yes" : "", b1.beta, b1.freq, b1.days, b1.corr,
+      v.betaChanged ? "yes" : "",
       w.be_cash, w.be_beta, w.spy_hedge_cost, w.etf_hedge_cost, w.leverage, w.hedge_cost_beta, w.headroom, w.headroom_beta,
       v.werr || VERDICT[v.verdict], w.be_profit, w.be_spy, w.be_hedged]));
   }
@@ -932,6 +981,9 @@ $("csvBtn").addEventListener("click", () => {
   $("gc").value = gc;
   const c = parseFloat(load(CASH_KEY));
   cash = isFinite(c) ? c : (config.cash_default ?? 0);
+  const sp = parseFloat(load(SPREAD_KEY));
+  spread = isFinite(sp) && sp >= 0 && sp <= 10 ? sp : (config.spread_default ?? 1);
+  $("spread").value = spread;
   $("cash").value = cash;
   const st = load(START_KEY) || "";
   customStart = /^\d{4}-\d{2}-\d{2}$/.test(st) ? st : "";

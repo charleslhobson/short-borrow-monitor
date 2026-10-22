@@ -33,6 +33,7 @@ from common import LRU, yahoo_call
 SEC_USER_AGENT = os.environ.get("SEC_USER_AGENT", "").strip()
 GC_DEFAULT = float(os.environ.get("GC_RATE", "0.25"))     # % / yr assumed for unmatched holdings
 CASH_DEFAULT = float(os.environ.get("CASH_RATE", "0"))    # % / yr for cash, T-bills and money market funds
+RFR_SPREAD_DEFAULT = float(os.environ.get("RFR_SPREAD", "1.0"))  # % / yr below the T-bill rate earned on short proceeds
 BENCHMARK = "SPY"
 RFR_SYMBOL = "^IRX"                                       # Yahoo: 13-week T-bill yield, in %
 FRED_DTB3 = "https://fred.stlouisfed.org/graph/fredgraph.csv?id=DTB3"
@@ -47,6 +48,10 @@ CACHE_LIMIT = 300             # most ETFs whose history / holdings stay in memor
 MIN_WINDOW_DAYS = 20          # trading days a window needs
 BETA_FULL_DAYS = 120          # a full beta needs this many daily returns...
 BETA_MIN_DAYS = 60            # ...and below this there's no beta at all
+BETA_FULL_WEEKS = 52          # the same for weekly returns
+BETA_MIN_WEEKS = 26
+BETA_CHANGE_FLAG = 0.25       # flag when the window's beta and last year's differ by more than this share
+WEEKLY_ABOVE = 0.5            # use weekly returns when more than this share of a fund's stocks trade abroad
 MIN_HEDGE_BETA = 0.1          # below this, shorting isn't treated as a SPY hedge
 SLEEVE_MIN_HOLDINGS = 5       # stock holdings a fund needs before they stand in for its index
 
@@ -816,14 +821,30 @@ def _display(s):
     return s.title() if s.isupper() else s
 
 
-def _row(h, exposure, fee, how, group, detail="", matched=0.0, assumed=False, symbol=None, name=None):
+def non_us_from_entry(entry):
+    """1.0 when an IBKR match is in a non-US file (the stock trades abroad), else 0.0."""
+    return 0.0 if entry.get("file", "usa") == "usa" else 1.0
+
+
+def non_us_from_holding(h):
+    """For holdings without an IBKR match: Yahoo's exchange suffix, else the filing's country."""
+    if h.get("yahoo"):
+        return 1.0 if split_foreign(h.get("ticker"), yahoo=True) else 0.0
+    country = (h.get("country") or "").upper()
+    if not country:
+        return None
+    return 0.0 if country == "US" else 1.0
+
+
+def _row(h, exposure, fee, how, group, detail="", matched=0.0, assumed=False, symbol=None, name=None,
+         non_us=None):
     return {
         "name": (name or _display(h.get("name")) or _display(h.get("title")) or "Unnamed")[:120],
         "ticker": h.get("ticker") or symbol, "isin": h.get("isin"), "cusip": clean_cusip(h.get("cusip")),
         "type": holding_type(h), "cat": h.get("cat") or "", "issuer_cat": h.get("issuer_cat") or "",
         "exposure": exposure, "fee": fee, "assumed": assumed, "how": how, "group": group,
         "matched": matched, "contrib": max(exposure, 0.0) * fee if fee is not None else 0.0,
-        "detail": detail,
+        "detail": detail, "non_us": non_us,
     }
 
 
@@ -831,7 +852,7 @@ def price_security(h, idx, gc, cash_fee):
     exp = h.get("pct") or 0.0
     if h.get("undisclosed"):
         return _row(h, exp, gc, "Assumed (unmatched)", "unmatched",
-                    "Yahoo only lists the top 10 holdings", assumed=True)
+                    "Yahoo only lists the top 10 holdings", assumed=True)      # where these trade isn't known
     if is_cash(h):
         detail = "Cash and other assets less liabilities" if h.get("residual") else "Not borrowed to replicate the fund"
         return _row(h, exp, cash_fee, "Cash & T-bills", "cash", detail)
@@ -846,14 +867,22 @@ def price_security(h, idx, gc, cash_fee):
     if entry is not None and entry.get("fee") is not None:
         return _row(h, exp, entry["fee"], match_label(entry, how), "matched",
                     f"{entry['symbol']} · {entry.get('name') or ''}".strip(" ·"), matched=1.0,
-                    symbol=entry["symbol"])
+                    symbol=entry["symbol"], non_us=non_us_from_entry(entry))
     text = f"{h.get('name', '')} {h.get('title', '')}".upper()
     if (h.get("issuer_cat") == "RF" or not h.get("cat")) and CASH_WORDS.search(text):
         return _row(h, exp, cash_fee, "Cash & T-bills", "cash", "Looks like a cash or money market fund")
     why = "; ".join(tried)
     if entry is not None:
         why = f"IBKR lists {entry['symbol']} without a fee; {why}"
-    return _row(h, exp, gc, "Assumed (unmatched)", "unmatched", why, assumed=True)
+    return _row(h, exp, gc, "Assumed (unmatched)", "unmatched", why, assumed=True,
+                non_us=non_us_from_holding(h))
+
+
+def weighted_non_us(pairs):
+    """Exposure-weighted non-US share from (weight, non_us) pairs; None when nothing is known."""
+    known = [(w, n) for w, n in pairs if n is not None and w > 0]
+    total = sum(w for w, _ in known)
+    return sum(w * n for w, n in known) / total if total > 0 else None
 
 
 def _sleeve(rows):
@@ -864,11 +893,12 @@ def _sleeve(rows):
     if len(eq) < SLEEVE_MIN_HOLDINGS or total <= 0:
         return None
     return {"rate": sum(r["exposure"] * r["fee"] for r in eq) / total,
-            "matched": sum(r["exposure"] * r["matched"] for r in eq) / total, "count": len(eq)}
+            "matched": sum(r["exposure"] * r["matched"] for r in eq) / total, "count": len(eq),
+            "non_us": weighted_non_us((r["exposure"], r["non_us"]) for r in eq)}
 
 
 def _underlying(ref, idx, gc, sleeve, proxy):
-    """(fee, matched share, label, detail, pending) for what a long derivative tracks."""
+    """(fee, matched share, label, detail, pending, non-US share) for what a long derivative tracks."""
     ref = ref or {}
     rname = _display(ref.get("name") or ref.get("title")) or "the reference asset"
     looks_like_index = bool(INDEX_WORDS.search(f"{ref.get('name') or ''} {ref.get('title') or ''}"))
@@ -877,13 +907,13 @@ def _underlying(ref, idx, gc, sleeve, proxy):
                                      names=(ref.get("name"), ref.get("title")))
         if entry is not None and entry.get("fee") is not None:
             return (entry["fee"], 1.0, f"Look-through: {entry['symbol']}",
-                    f"Tracks {rname}; fee via {match_label(entry, how)}", False)
+                    f"Tracks {rname}; fee via {match_label(entry, how)}", False, non_us_from_entry(entry))
         if not looks_like_index:
-            return gc, 0.0, "Assumed (unmatched)", f"Tracks {rname}, but {'; '.join(tried)}", False
+            return gc, 0.0, "Assumed (unmatched)", f"Tracks {rname}, but {'; '.join(tried)}", False, None
     if ref.get("type") == "index" or looks_like_index:
         comps = ref.get("components") or []
         if comps:
-            total, acc, matched = 0.0, 0.0, 0.0
+            total, acc, matched, where = 0.0, 0.0, 0.0, []
             for c in comps:
                 w = abs(c["amount"]) if c.get("amount") else 1.0
                 entry, _, _ = idx.find(c.get("isin"), c.get("cusip"), c.get("ticker"), names=(c.get("name"),))
@@ -891,21 +921,25 @@ def _underlying(ref, idx, gc, sleeve, proxy):
                 acc += w * (entry["fee"] if ok else gc)
                 matched += w if ok else 0.0
                 total += w
+                if ok:
+                    where.append((w, non_us_from_entry(entry)))
             return (acc / total, matched / total, f"Look-through: {rname}",
-                    f"{len(comps)} components listed in the filing; {matched / total:.0%} of them matched", False)
+                    f"{len(comps)} components listed in the filing; {matched / total:.0%} of them matched", False,
+                    weighted_non_us(where))
         if sleeve:
             return (sleeve["rate"], sleeve["matched"], f"Look-through: {rname}",
-                    f"Priced from the fund's own {sleeve['count']} stock holdings, as a stand-in for the index", False)
+                    f"Priced from the fund's own {sleeve['count']} stock holdings, as a stand-in for the index", False,
+                    sleeve.get("non_us"))
         p = proxy(ref.get("name") or "") if proxy else None
         if p and p[0] == "ok":
             return (p[2], p[3], f"Look-through: {rname}",
-                    f"Priced from {p[1]}'s holdings, which track this index", False)
+                    f"Priced from {p[1]}'s holdings, which track this index", False, p[4] if len(p) > 4 else None)
         if p and p[0] == "pending":
-            return gc, 0.0, "Assumed (unmatched)", f"Index {rname}: {p[1]}'s holdings are still loading", True
+            return gc, 0.0, "Assumed (unmatched)", f"Index {rname}: {p[1]}'s holdings are still loading", True, None
         why = (f"couldn't load {p[1]}'s holdings ({p[2]})" if p else
                "no components listed and no proxy ETF set for it (see INDEX_PROXIES in etf.py)")
-        return gc, 0.0, "Assumed (unmatched)", f"Index {rname}: {why}", False
-    return gc, 0.0, "Assumed (unmatched)", "The filing doesn't say what this tracks", False
+        return gc, 0.0, "Assumed (unmatched)", f"Index {rname}: {why}", False, None
+    return gc, 0.0, "Assumed (unmatched)", "The filing doesn't say what this tracks", False, None
 
 
 def price_derivative(h, idx, gc, nav, fund_name, sleeve, proxy):
@@ -938,13 +972,13 @@ def price_derivative(h, idx, gc, nav, fund_name, sleeve, proxy):
         what = "delta-adjusted exposure can't be computed" if d["kind"] == "option" else "no notional amount"
         return _row(h, 0.0, None, "Excluded: no exposure reported", "excluded",
                     f"The filing gives {what}", name=name), False
-    fee, matched, how, detail, pending = _underlying(d.get("ref"), idx, gc, sleeve, proxy)
+    fee, matched, how, detail, pending, non_us = _underlying(d.get("ref"), idx, gc, sleeve, proxy)
     notes = [detail, f"exposure {exposure:.1%} of net assets from notional" if not approx else approx]
     if src != "as stated in the filing":
         notes.append(f"direction {src}")
     group = "lookthrough" if how.startswith("Look-through") else "unmatched"
     return _row(h, exposure, fee, how, group, "; ".join(notes), matched=matched,
-                assumed=matched < 1.0, name=name), pending
+                assumed=matched < 1.0, name=name, non_us=non_us), pending
 
 
 def price_holdings(hold, idx, gc, cash_fee, fund_name=None, proxy=None):
@@ -998,6 +1032,8 @@ def summarize(rows, pending=False):
         "assumed_weight": need_w - matched_w,
         "equity_rate": sum(r["contrib"] for r in eq) / gross if gross > 0 else None,
         "equity_matched": sum(pos(r) * r["matched"] for r in eq) / gross if gross > 0 else None,
+        # share of long stock exposure that trades outside the US (decides daily vs weekly beta)
+        "foreign_share": weighted_non_us((pos(r), r.get("non_us")) for r in eq),
         "by_group": by_group,
         "unmatched": [{"name": r["name"], "weight": pos(r) * (1 - r["matched"]), "detail": r["detail"]}
                       for r in unmatched[:10]],
@@ -1018,26 +1054,63 @@ def holdings_warning(hold):
 
 
 # ------------------------------- history ----------------------------------
-def compute_beta(close, spy):
-    """Beta vs SPY from the last year of daily returns, on the dates both traded."""
+def beta_returns(close, spy, start=None, end=None, weekly=False):
+    """Returns of the ETF (x) and SPY (m) on the days both traded, daily or Friday to Friday."""
     import pandas as pd
     df = pd.concat({"x": close, "m": spy}, axis=1, join="inner").dropna()
-    if df.empty:
-        return {"beta": None, "corr": None, "days": 0}
-    df = df[df.index >= df.index[-1] - pd.DateOffset(years=1)]
-    r = df.pct_change().dropna()
+    if start is not None:
+        df = df[df.index >= pd.Timestamp(start)]
+    if end is not None:
+        df = df[df.index <= pd.Timestamp(end)]
+    if weekly and len(df):
+        df = df.resample("W-FRI").last().dropna()
+    return df.pct_change().dropna()
+
+
+def beta_from(r, weekly=False):
+    """cov / var of a returns frame from beta_returns, with the correlation and count."""
     n = len(r)
+    freq = "weekly" if weekly else "daily"
+    minimum, full = (BETA_MIN_WEEKS, BETA_FULL_WEEKS) if weekly else (BETA_MIN_DAYS, BETA_FULL_DAYS)
     var = float(r["m"].var()) if n > 1 else 0.0
-    if n < BETA_MIN_DAYS or not var > 0:
-        return {"beta": None, "corr": None, "days": n}
+    if n < minimum or not var > 0:
+        return {"beta": None, "corr": None, "days": n, "freq": freq}
     return {"beta": float(r["x"].cov(r["m"]) / var), "corr": float(r["x"].corr(r["m"])),
-            "days": n, "partial": n < BETA_FULL_DAYS,
+            "days": n, "freq": freq, "partial": n < full,
             "start": r.index[0].strftime("%Y-%m-%d"), "end": r.index[-1].strftime("%Y-%m-%d")}
 
 
-def rfr_over(rate, start, end):
-    """Return on cash from start to end: the T-bill yield accrued every calendar day on
-    actual/360 and compounded, then annualized the same way as the ETF's return."""
+def compute_beta(close, spy, weekly=False):
+    """Beta vs SPY over the last year, for sizing a hedge today ("days" counts the returns used)."""
+    import pandas as pd
+    both = pd.concat({"x": close, "m": spy}, axis=1, join="inner").dropna()
+    if both.empty:
+        return {"beta": None, "corr": None, "days": 0, "freq": "weekly" if weekly else "daily"}
+    start = both.index[-1] - pd.DateOffset(years=1)
+    return beta_from(beta_returns(close, spy, start=start, weekly=weekly), weekly)
+
+
+def window_beta(close, spy, start, end, beta1y=None, weekly=False, same_as_1y=False):
+    """Beta over a window's own dates. Falls back to the 1-year beta when the window is too short."""
+    one = (beta1y or {}).get("beta")
+    if same_as_1y and beta1y is not None:
+        wb = dict(beta1y)
+    else:
+        wb = beta_from(beta_returns(close, spy, start, end, weekly), weekly)
+    if wb.get("beta") is None and one is not None:
+        wb = dict(beta1y, fallback=True, note="Window too short for its own beta; using the last year's")
+    used = wb.get("beta")
+    changed = bool(not wb.get("fallback") and used is not None and one
+                   and abs(used - one) > BETA_CHANGE_FLAG * abs(one))
+    return wb, used, changed
+
+
+def rfr_over(rate, start, end, spread=0.0):
+    """Return on cash from start to end: each calendar day earns max(T-bill yield - spread, 0)
+    on actual/360, compounded, then annualized the same way as the ETF's return.
+
+    "ann"/"total" are this cash rate (what short proceeds earn); "tbill_ann"/"tbill_total"
+    are the plain T-bill rate, and "floor_days" counts days the spread was above the yield."""
     import numpy as np
     import pandas as pd
     if rate is None or not len(rate) or end <= start:
@@ -1048,19 +1121,29 @@ def rfr_over(rate, start, end):
     y = rate.reindex(rate.index.union(days)).ffill().bfill().reindex(days)
     if y.isna().any():
         return None
-    growth = float(np.exp(np.log1p(y.to_numpy(dtype=float) / 100.0 / 360.0).sum()))
+    yields = y.to_numpy(dtype=float)
+    earned = np.maximum(yields - spread, 0.0)
     yrs = (end - start).days / 365.25
-    return {"total": growth - 1, "ann": growth ** (1 / yrs) - 1}
+
+    def grow(pct):
+        g = float(np.exp(np.log1p(pct / 100.0 / 360.0).sum()))
+        return g - 1, g ** (1 / yrs) - 1
+
+    cash_total, cash_ann = grow(earned)
+    tbill_total, tbill_ann = grow(np.maximum(yields, 0.0))
+    return {"total": cash_total, "ann": cash_ann, "tbill_total": tbill_total, "tbill_ann": tbill_ann,
+            "spread": spread, "floor_days": int((yields - spread < 0).sum()), "days": len(yields)}
 
 
 def beta_adjusted(r_x, r_spy, rfr, beta, fee=None):
     """Beta-adjusted break-evens. All inputs and outputs are % per year.
 
-    A short earns the risk-free rate on its proceeds, so shorting SPY gives -1.00 beta
-    at a hedge cost of RFR - R_SPY. Shorting the ETF at fee f gives -beta at a cost of
-    RFR - R_X - f; levered to -1.00 beta that's (RFR - R_X - f) / beta.
-      be_cash = RFR - R_X                        (short profits after the risk-free rate)
-      be_beta = beta * (R_SPY - RFR) - (R_X - RFR)   (as cheap a hedge as shorting SPY)
+    `rfr` is the cash rate short proceeds earn (the T-bill rate minus the spread), so
+    shorting SPY gives -1.00 beta at a hedge cost of r - R_SPY. Shorting the ETF at fee f
+    gives -beta at a cost of r - R_X - f; levered to -1.00 beta that's (r - R_X - f) / beta,
+    which also earns r on the larger (or smaller) proceeds.
+      be_cash = r - R_X                          (short profits after the cash rate)
+      be_beta = beta * (R_SPY - r) - (R_X - r)   (as cheap a hedge as shorting SPY)
     """
     eps = 1e-9
     out = {"spy_hedge_cost": rfr - r_spy, "be_cash": rfr - r_x, "be_beta": None,
@@ -1081,12 +1164,15 @@ def beta_adjusted(r_x, r_spy, rfr, beta, fee=None):
     return out
 
 
-def analyze_window(close, spy, years=None, start=None, rfr=None, beta=None, fee=None):
+def analyze_window(close, spy, years=None, start=None, rfr=None, beta1y=None, fee=None, weekly=False):
     """Returns, break-even fees and the beta-adjusted hedge comparison over one window.
 
     Preset windows (years) return None when the ETF is younger than the window. A
     custom start date starts at inception if it's earlier than that, and returns
     {"error": ...} when fewer than MIN_WINDOW_DAYS trading days are left.
+
+    Beta comes from the window's own returns (window_beta), with the 1-year beta as
+    the fallback; `rfr` gives the cash rate earned on short proceeds over the dates.
 
     The previous, path-based break-evens are kept: short P&L (fraction of starting
     notional) = -R_etf - fee * A, where A = sum over days of (short's market value /
@@ -1143,13 +1229,19 @@ def analyze_window(close, spy, years=None, start=None, rfr=None, beta=None, fee=
         "be_profit": -r_etf / a * 100 if a > 0 else None,
         "be_spy": (-r_etf - r_spy) / a * 100 if a > 0 else None,
         "be_hedged": (r_spy - r_etf) / a * 100 if a > 0 else None,
-        "rfr_total": None, "rfr_ann": None,
+        "rfr_total": None, "rfr_ann": None,          # the cash rate used (T-bill minus spread)
+        "tbill_total": None, "tbill_ann": None, "spread": None, "floor_days": None,
     }
+    wb, used, changed = window_beta(close, spy, c.index[0], c.index[-1], beta1y, weekly,
+                                    same_as_1y=years == 1)
+    out.update(beta_window=wb, beta_used=used, beta_changed=changed)
     rf = rfr(c.index[0], c.index[-1]) if rfr else None
     if rf:
         out["rfr_total"], out["rfr_ann"] = rf["total"], rf["ann"]
+        out["tbill_total"], out["tbill_ann"] = rf.get("tbill_total", rf["total"]), rf.get("tbill_ann", rf["ann"])
+        out["spread"], out["floor_days"] = rf.get("spread", 0.0), rf.get("floor_days", 0)
         if out["etf_ann"] is not None and out["spy_ann"] is not None:
-            out.update(beta_adjusted(out["etf_ann"] * 100, out["spy_ann"] * 100, rf["ann"] * 100, beta, fee))
+            out.update(beta_adjusted(out["etf_ann"] * 100, out["spy_ann"] * 100, rf["ann"] * 100, used, fee))
     return out
 
 
@@ -1214,16 +1306,16 @@ class EtfService:
             self._index = (table, foreign, idx)
         return idx
 
-    def _rfr_fn(self, rate):
+    def _rfr_fn(self, rate, spread=0.0):
         if rate is None:
             return None
 
         def fn(start, end):
-            key = (id(rate), start, end)
+            key = (id(rate), start, end, spread)
             with self.lock:
                 if key in self._rf:
                     return self._rf[key]
-            res = rfr_over(rate, start, end)
+            res = rfr_over(rate, start, end, spread)
             with self.lock:
                 if len(self._rf) > 2000:
                     self._rf.clear()
@@ -1247,7 +1339,7 @@ class EtfService:
             s = price_holdings(data, idx, gc, cash, proxy=None)
             if s["equity_rate"] is None:
                 return ("error", sym, "it has no stock holdings")
-            return ("ok", sym, s["equity_rate"], s["equity_matched"])
+            return ("ok", sym, s["equity_rate"], s["equity_matched"], s["foreign_share"])
         return proxy
 
     def _price(self, sym, hold, idx, gc, cash, waiting, fund_name=None):
@@ -1289,7 +1381,7 @@ class EtfService:
             block = self._holdings_block(sym, hold, hist, idx, gc, cash, [], full=True)
         return dict(block, symbol=sym, gc=gc, cash=cash)
 
-    def report(self, symbols, gc, cash=CASH_DEFAULT, start=None):
+    def report(self, symbols, gc, cash=CASH_DEFAULT, start=None, spread=RFR_SPREAD_DEFAULT):
         t0 = time.time()
         waiting = [self._ensure("hist", BENCHMARK), self._ensure("rfr", "RFR")]
         for s in symbols:
@@ -1305,7 +1397,7 @@ class EtfService:
         spy_close = spy.get("close") if spy and "_error" not in spy else None
         rf, _ = self._lookup("rfr", "RFR")
         rate = rf.get("rate") if rf and "_error" not in rf else None
-        rfr_fn = self._rfr_fn(rate)
+        rfr_fn = self._rfr_fn(rate, spread)
         rfr_state = ({"state": "ok", "source": rf["source"]} if rate is not None else
                      {"state": "loading"} if rf is None else {"state": "error", "text": rf["_error"]})
 
@@ -1352,14 +1444,19 @@ class EtfService:
                 row["aum"] = hist.get("aum")
                 row["expense"] = hist.get("expense")
                 row["quote_type"] = hist.get("quote_type")
-                beta = compute_beta(close, spy_close)
-                windows = {k: analyze_window(close, spy_close, years=y, rfr=rfr_fn, beta=beta["beta"], fee=fee)
+                # mostly non-US funds use weekly returns (their markets close before the US does)
+                foreign = (holdings[s].get("theo") or {}).get("foreign_share")
+                weekly = foreign is not None and foreign > WEEKLY_ABOVE
+                beta = compute_beta(close, spy_close, weekly)
+                windows = {k: analyze_window(close, spy_close, years=y, rfr=rfr_fn, beta1y=beta, fee=fee,
+                                             weekly=weekly)
                            for k, y in WINDOWS.items()}
                 if start is not None:
                     windows["custom"] = analyze_window(close, spy_close, start=start, rfr=rfr_fn,
-                                                       beta=beta["beta"], fee=fee)
+                                                       beta1y=beta, fee=fee, weekly=weekly)
                 row["history"] = {"inception": close.index[0].strftime("%Y-%m-%d"),
-                                  "windows": windows, "beta": beta}
+                                  "windows": windows, "beta": beta, "weekly": weekly,
+                                  "foreign_share": foreign}
 
             row["holdings"] = holdings[s]
             if row["holdings"].get("pending") or (row["holdings"].get("theo") or {}).get("pending"):
@@ -1378,6 +1475,7 @@ class EtfService:
         borrow_state = ({"state": "ok", "as_of": as_of} if table else
                         {"state": "error", "text": error} if error and not refreshing else
                         {"state": "loading"})
-        return {"rows": rows, "pending": pending, "gc": gc, "cash": cash, "borrow": borrow_state,
+        return {"rows": rows, "pending": pending, "gc": gc, "cash": cash, "spread": spread,
+                "borrow": borrow_state,
                 "rfr": rfr_state, "foreign": foreign_state, "sec": bool(SEC_USER_AGENT),
                 "start": start.isoformat() if start else None}

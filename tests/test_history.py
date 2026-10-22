@@ -121,7 +121,7 @@ class RiskFreeTests(unittest.TestCase):
 class WindowTests(unittest.TestCase):
     def setUp(self):
         self.young = etf_series(1.5, start="2022-08-09")
-        self.beta = etf.compute_beta(self.young, SPY)["beta"]
+        self.beta1y = etf.compute_beta(self.young, SPY)
 
     def test_parse_start_date(self):
         today = date(2026, 10, 22)
@@ -133,13 +133,13 @@ class WindowTests(unittest.TestCase):
             self.assertTrue(err, bad)
 
     def test_snaps_to_first_trading_day(self):
-        w = etf.analyze_window(self.young, SPY, start=date(2023, 4, 29), rfr=rfr, beta=self.beta, fee=1.0)
+        w = etf.analyze_window(self.young, SPY, start=date(2023, 4, 29), rfr=rfr, beta1y=self.beta1y, fee=1.0)
         self.assertEqual(w["start"], "2023-05-01")                  # Saturday -> Monday
         self.assertFalse(w["clamped"])
         self.assertEqual(w["requested_start"], "2023-04-29")
 
     def test_clamps_to_inception(self):
-        w = etf.analyze_window(self.young, SPY, start=date(2020, 1, 1), rfr=rfr, beta=self.beta, fee=1.0)
+        w = etf.analyze_window(self.young, SPY, start=date(2020, 1, 1), rfr=rfr, beta1y=self.beta1y, fee=1.0)
         self.assertEqual(w["start"], "2022-08-09")
         self.assertTrue(w["clamped"])
 
@@ -157,11 +157,13 @@ class WindowTests(unittest.TestCase):
         self.assertNotIn("be_beta", w)
 
     def test_window_uses_the_formula(self):
-        w = etf.analyze_window(self.young, SPY, start=date(2023, 5, 1), rfr=rfr, beta=self.beta, fee=1.0)
+        w = etf.analyze_window(self.young, SPY, start=date(2023, 5, 1), rfr=rfr, beta1y=self.beta1y, fee=1.0)
         r_x, r_spy, rf = w["etf_ann"] * 100, w["spy_ann"] * 100, w["rfr_ann"] * 100
-        self.assertAlmostEqual(w["be_beta"], self.beta * (r_spy - rf) - (r_x - rf))
+        beta = w["beta_used"]                                       # the window's own beta
+        self.assertAlmostEqual(beta, w["beta_window"]["beta"])
+        self.assertAlmostEqual(w["be_beta"], beta * (r_spy - rf) - (r_x - rf))
         self.assertAlmostEqual(w["be_cash"], rf - r_x)
-        self.assertAlmostEqual(w["hedge_cost_beta"], (rf - r_x - 1.0) / self.beta)
+        self.assertAlmostEqual(w["hedge_cost_beta"], (rf - r_x - 1.0) / beta)
         self.assertAlmostEqual(w["rfr_ann"], (1 + 0.04 / 360) ** 365.25 - 1, places=9)
         for key in ("be_profit", "be_spy", "be_hedged"):            # previous method kept
             self.assertIn(key, w)

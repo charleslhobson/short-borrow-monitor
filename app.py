@@ -292,10 +292,10 @@ def add_prices(out, prices, enabled):
         row["avail_value"] = price * shares if price and shares is not None else None
 
 
-def rate_param(query, key, default):
-    """A % / yr rate from the query string, between 0 and 100."""
+def rate_param(query, key, default, hi=100):
+    """A % / yr rate from the query string, between 0 and `hi`."""
     v = to_float(query.get(key, [""])[0])
-    return default if v is None or not math.isfinite(v) or not 0 <= v <= 100 else v
+    return default if v is None or not math.isfinite(v) or not 0 <= v <= hi else v
 
 
 def borrow_status(table, as_of, error, refreshing):
@@ -349,8 +349,9 @@ class Handler(BaseHTTPRequestHandler):
             raw = ",".join(query.get("symbols", [""]))
             syms = list(dict.fromkeys(s for s in (normalize(x) for x in raw.split(",")) if s))
             start, start_error = etf_mod.parse_start_date(query.get("start", [""])[0])
+            spread = rate_param(query, "spread", etf_mod.RFR_SPREAD_DEFAULT, hi=10)
             syms = syms[:MAX_SYMBOLS]
-            out = ETF.report(syms, gc, cash, start)
+            out = ETF.report(syms, gc, cash, start, spread)
             out["start_error"] = start_error
             add_prices(out, PRICES.get(syms) if PRICES_ON else {}, PRICES_ON)
             return self._json(out)
@@ -361,6 +362,7 @@ class Handler(BaseHTTPRequestHandler):
                                "default_etfs": DEFAULT_ETFS,
                                "gc_default": etf_mod.GC_DEFAULT,
                                "cash_default": etf_mod.CASH_DEFAULT,
+                               "spread_default": etf_mod.RFR_SPREAD_DEFAULT,
                                "prices_enabled": PRICES_ON,
                                "limited_below": LIMITED_BELOW})
 
