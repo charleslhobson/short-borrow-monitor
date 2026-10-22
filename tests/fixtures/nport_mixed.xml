@@ -1,0 +1,205 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<edgarSubmission xmlns="http://www.sec.gov/edgar/nport">
+  <formData>
+    <genInfo>
+      <seriesName>Test Mixed Holdings Fund</seriesName>
+      <repPdDate>2026-06-30</repPdDate>
+    </genInfo>
+    <fundInfo>
+      <totAssets>101000000</totAssets>
+      <netAssets>100000000</netAssets>
+    </fundInfo>
+    <invstOrSecs>
+      <!-- plain stock with ISIN -->
+      <invstOrSec>
+        <name>Apple Inc</name><title>Apple Inc</title><cusip>037833100</cusip>
+        <identifiers><isin value="US0378331005"/></identifiers>
+        <valUSD>10000000</valUSD><pctVal>10</pctVal><payoffProfile>Long</payoffProfile>
+        <assetCat>EC</assetCat><issuerCat>CORP</issuerCat><invCountry>US</invCountry>
+      </invstOrSec>
+      <!-- CUSIP only -->
+      <invstOrSec>
+        <name>Microsoft Corp</name><title>Microsoft Corp</title><cusip>594918104</cusip>
+        <identifiers><other otherDesc="Internal" value="X1"/></identifiers>
+        <valUSD>8000000</valUSD><pctVal>8</pctVal><payoffProfile>Long</payoffProfile>
+        <assetCat>EC</assetCat><issuerCat>CORP</issuerCat><invCountry>US</invCountry>
+      </invstOrSec>
+      <!-- ticker only, slash format -->
+      <invstOrSec>
+        <name>Berkshire Hathaway Inc</name><title>Berkshire Hathaway Inc Class B</title><cusip>N/A</cusip>
+        <identifiers><ticker value="BRK/B"/></identifiers>
+        <valUSD>5000000</valUSD><pctVal>5</pctVal><payoffProfile>Long</payoffProfile>
+        <assetCat>EC</assetCat><issuerCat>CORP</issuerCat><invCountry>US</invCountry>
+      </invstOrSec>
+      <!-- foreign stock: CINS cusip + Japanese ISIN -->
+      <invstOrSec>
+        <name>Toyota Motor Corp</name><title>Toyota Motor Corp</title><cusip>J92676113</cusip>
+        <identifiers><isin value="JP3633400001"/></identifiers>
+        <valUSD>6000000</valUSD><pctVal>6</pctVal><payoffProfile>Long</payoffProfile>
+        <assetCat>EC</assetCat><issuerCat>CORP</issuerCat><invCountry>JP</invCountry>
+      </invstOrSec>
+      <!-- foreign stock: Bloomberg-style ticker only -->
+      <invstOrSec>
+        <name>Tencent Holdings Ltd</name><title>Tencent Holdings Ltd</title><cusip>000000000</cusip>
+        <identifiers><ticker value="700 HK"/></identifiers>
+        <valUSD>1000000</valUSD><pctVal>1</pctVal><payoffProfile>Long</payoffProfile>
+        <assetCat>EC</assetCat><issuerCat>CORP</issuerCat><invCountry>KY</invCountry>
+      </invstOrSec>
+      <!-- foreign stock: ISIN in the UK file -->
+      <invstOrSec>
+        <name>Shell PLC</name><title>Shell PLC</title><cusip>G80827101</cusip>
+        <identifiers><isin value="GB00BP6MXD84"/></identifiers>
+        <valUSD>1000000</valUSD><pctVal>1</pctVal><payoffProfile>Long</payoffProfile>
+        <assetCat>EC</assetCat><issuerCat>CORP</issuerCat><invCountry>GB</invCountry>
+      </invstOrSec>
+      <!-- name only -->
+      <invstOrSec>
+        <name>Exxon Mobil Corporation</name><title>Exxon Mobil Corporation</title><cusip>000000000</cusip>
+        <identifiers/>
+        <valUSD>4000000</valUSD><pctVal>4</pctVal><payoffProfile>Long</payoffProfile>
+        <assetCat>EC</assetCat><issuerCat>CORP</issuerCat><invCountry>US</invCountry>
+      </invstOrSec>
+      <!-- an ETF held by the fund -->
+      <invstOrSec>
+        <name>SPDR S&amp;P 500 ETF Trust</name><title>SPDR S&amp;P 500 ETF Trust</title><cusip>78462F103</cusip>
+        <identifiers><isin value="US78462F1030"/><ticker value="SPY"/></identifiers>
+        <valUSD>1000000</valUSD><pctVal>1</pctVal><payoffProfile>Long</payoffProfile>
+        <assetCat>EC</assetCat><issuerCat>RF</issuerCat><invCountry>US</invCountry>
+      </invstOrSec>
+      <!-- ISIN row has no fee, ticker row does -->
+      <invstOrSec>
+        <name>Abcd Corp</name><title>Abcd Corp</title><cusip>111111111</cusip>
+        <identifiers><isin value="US1111111116"/><ticker value="ABCE"/></identifiers>
+        <valUSD>1500000</valUSD><pctVal>1.5</pctVal><payoffProfile>Long</payoffProfile>
+        <assetCat>EC</assetCat><issuerCat>CORP</issuerCat><invCountry>US</invCountry>
+      </invstOrSec>
+      <!-- not in any IBKR file -->
+      <invstOrSec>
+        <name>Obscure Holdings Inc</name><title>Obscure Holdings Inc</title><cusip>999999999</cusip>
+        <identifiers/>
+        <valUSD>2000000</valUSD><pctVal>2</pctVal><payoffProfile>Long</payoffProfile>
+        <assetCat>EC</assetCat><issuerCat>CORP</issuerCat><invCountry>US</invCountry>
+      </invstOrSec>
+      <!-- short stock position -->
+      <invstOrSec>
+        <name>Short Co Inc</name><title>Short Co Inc</title><cusip>825000100</cusip>
+        <identifiers><isin value="US8250001001"/></identifiers>
+        <valUSD>-1000000</valUSD><pctVal>-1</pctVal><payoffProfile>Short</payoffProfile>
+        <assetCat>EC</assetCat><issuerCat>CORP</issuerCat><invCountry>US</invCountry>
+      </invstOrSec>
+      <!-- single-stock swap -->
+      <invstOrSec>
+        <name>Citibank NA</name><title>NVIDIA Corp Swap</title><cusip>000000000</cusip>
+        <identifiers/>
+        <valUSD>200000</valUSD><pctVal>0.2</pctVal><payoffProfile>N/A</payoffProfile>
+        <assetCat>DE</assetCat><issuerCat>CORP</issuerCat><invCountry>US</invCountry>
+        <derivativeInfo>
+          <swapDeriv derivCat="SWP">
+            <descRefInstrmnt>
+              <otherRefInst>
+                <issuerName>NVIDIA Corp</issuerName><issueTitle>NVIDIA Corp</issueTitle>
+                <identifiers><isin value="US67066G1040"/><ticker value="NVDA"/></identifiers>
+              </otherRefInst>
+            </descRefInstrmnt>
+            <otherRecDesc fixedOrFloating="Other">NVIDIA Corp total return</otherRecDesc>
+            <floatingPmntDesc fixedOrFloating="Floating" floatingRtIndex="SOFR" floatingRtSpread="0.5" curCd="USD"/>
+            <notionalAmt>20000000</notionalAmt><curCd>USD</curCd>
+          </swapDeriv>
+        </derivativeInfo>
+      </invstOrSec>
+      <!-- index swap, components not listed -->
+      <invstOrSec>
+        <name>BNP Paribas</name><title>S&amp;P 500 Index Swap</title><cusip>000000000</cusip>
+        <identifiers/>
+        <valUSD>-100000</valUSD><pctVal>-0.1</pctVal><payoffProfile>N/A</payoffProfile>
+        <assetCat>DE</assetCat><issuerCat>CORP</issuerCat><invCountry>FR</invCountry>
+        <derivativeInfo>
+          <swapDeriv derivCat="SWP">
+            <descRefInstrmnt>
+              <indexBasketInfo><indexName>S&amp;P 500 Index</indexName><indexIdentifier>SPX</indexIdentifier></indexBasketInfo>
+            </descRefInstrmnt>
+            <otherRecDesc fixedOrFloating="Other">S&amp;P 500 total return</otherRecDesc>
+            <floatingPmntDesc fixedOrFloating="Floating" floatingRtIndex="SOFR" curCd="USD"/>
+            <notionalAmt>15000000</notionalAmt><curCd>USD</curCd>
+          </swapDeriv>
+        </derivativeInfo>
+      </invstOrSec>
+      <!-- index future -->
+      <invstOrSec>
+        <name>Chicago Mercantile Exchange</name><title>E-mini S&amp;P 500 Future Dec26</title><cusip>000000000</cusip>
+        <identifiers><ticker value="ESZ6"/></identifiers>
+        <valUSD>50000</valUSD><pctVal>0.05</pctVal><payoffProfile>N/A</payoffProfile>
+        <assetCat>DE</assetCat><issuerCat>CORP</issuerCat><invCountry>US</invCountry>
+        <derivativeInfo>
+          <futrDeriv derivCat="FUT">
+            <descRefInstrmnt>
+              <indexBasketInfo><indexName>S&amp;P 500 Index</indexName><indexIdentifier>SPX</indexIdentifier></indexBasketInfo>
+            </descRefInstrmnt>
+            <payOffProf>Long</payOffProf>
+            <expDate>2026-12-18</expDate>
+            <notionalAmt>10000000</notionalAmt><curCd>USD</curCd>
+          </futrDeriv>
+        </derivativeInfo>
+      </invstOrSec>
+      <!-- written call -->
+      <invstOrSec>
+        <name>Options Clearing Corp</name><title>AAPL Call 250 01/15/2027</title><cusip>000000000</cusip>
+        <identifiers/>
+        <balance>-50</balance><units>NC</units>
+        <valUSD>-20000</valUSD><pctVal>-0.02</pctVal><payoffProfile>Short</payoffProfile>
+        <assetCat>DE</assetCat><issuerCat>CORP</issuerCat><invCountry>US</invCountry>
+        <derivativeInfo>
+          <optionSwaptionWarrantDeriv derivCat="OPT">
+            <putOrCall>Call</putOrCall>
+            <writtenOrPur>Written</writtenOrPur>
+            <descRefInstrmnt>
+              <otherRefInst>
+                <issuerName>Apple Inc</issuerName><issueTitle>Apple Inc</issueTitle>
+                <identifiers><isin value="US0378331005"/></identifiers>
+              </otherRefInst>
+            </descRefInstrmnt>
+            <shareNo>100</shareNo>
+            <exercisePrice>250</exercisePrice><exercisePriceCurCd>USD</exercisePriceCurCd>
+            <expDt>2027-01-15</expDt>
+            <delta>0.4</delta>
+          </optionSwaptionWarrantDeriv>
+        </derivativeInfo>
+      </invstOrSec>
+      <!-- T-bill -->
+      <invstOrSec>
+        <name>United States Treasury</name><title>US Treasury Bill 11/20/2026</title><cusip>912797PZ9</cusip>
+        <identifiers/>
+        <valUSD>12000000</valUSD><pctVal>12</pctVal><payoffProfile>Long</payoffProfile>
+        <assetCat>DBT</assetCat><issuerCat>UST</issuerCat><invCountry>US</invCountry>
+      </invstOrSec>
+      <!-- money market fund (conditional category element) -->
+      <invstOrSec>
+        <name>Dreyfus Treasury Securities Cash Management</name><title>Dreyfus Treasury Securities Cash Management</title><cusip>26188J206</cusip>
+        <identifiers/>
+        <valUSD>9000000</valUSD><pctVal>9</pctVal><payoffProfile>Long</payoffProfile>
+        <assetCat>STIV</assetCat><issuerConditional issuerCat="OTHER" desc="Money market fund"/><invCountry>US</invCountry>
+      </invstOrSec>
+      <!-- corporate bond -->
+      <invstOrSec>
+        <name>Ford Motor Credit Co LLC</name><title>Ford Motor Credit Co LLC 5.125% 06/16/2030</title><cusip>345397B44</cusip>
+        <identifiers/>
+        <valUSD>3000000</valUSD><pctVal>3</pctVal><payoffProfile>Long</payoffProfile>
+        <assetCat>DBT</assetCat><issuerCat>CORP</issuerCat><invCountry>US</invCountry>
+      </invstOrSec>
+      <!-- FX forward -->
+      <invstOrSec>
+        <name>State Street Bank</name><title>USD/JPY Forward</title><cusip>000000000</cusip>
+        <identifiers/>
+        <valUSD>10000</valUSD><pctVal>0.01</pctVal><payoffProfile>N/A</payoffProfile>
+        <assetCat>DFE</assetCat><issuerCat>CORP</issuerCat><invCountry>US</invCountry>
+        <derivativeInfo>
+          <fwdDeriv derivCat="FWD">
+            <amtCurSold>5000000</amtCurSold><curSold>USD</curSold>
+            <amtCurPur>750000000</amtCurPur><curPur>JPY</curPur>
+            <settlementDt>2026-12-15</settlementDt>
+          </fwdDeriv>
+        </derivativeInfo>
+      </invstOrSec>
+    </invstOrSecs>
+  </formData>
+</edgarSubmission>

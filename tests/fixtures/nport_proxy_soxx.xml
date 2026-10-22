@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<edgarSubmission xmlns="http://www.sec.gov/edgar/nport">
+  <formData>
+    <genInfo><seriesName>Test Semiconductor ETF</seriesName><repPdDate>2026-07-31</repPdDate></genInfo>
+    <fundInfo><netAssets>500000000</netAssets></fundInfo>
+    <invstOrSecs>
+      <invstOrSec>
+        <name>NVIDIA Corp</name><title>NVIDIA Corp</title><cusip>67066G104</cusip>
+        <identifiers><isin value="US67066G1040"/></identifiers><pctVal>60</pctVal><payoffProfile>Long</payoffProfile>
+        <assetCat>EC</assetCat><issuerCat>CORP</issuerCat>
+      </invstOrSec>
+      <invstOrSec>
+        <name>Dupe Inc</name><title>Dupe Inc</title><cusip>222222222</cusip>
+        <identifiers><isin value="US2222222222"/></identifiers><pctVal>39.5</pctVal><payoffProfile>Long</payoffProfile>
+        <assetCat>EC</assetCat><issuerCat>CORP</issuerCat>
+      </invstOrSec>
+    </invstOrSecs>
+  </formData>
+</edgarSubmission>

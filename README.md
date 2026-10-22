@@ -53,18 +53,42 @@ a few seconds to load.
 ## ETF short screen
 
 Open `/etf` on your site (or click **ETF short screen** at the top of any page).
-Paste your ETF list into the box and each ETF gets one row with:
+Paste your ETF list into the box (single stocks work too) and each one gets a row with:
 
 - **Quoted fee and availability** from IBKR's stock loan file.
-- **Break-even fees from history.** Using Yahoo's total-return prices, the fee at
-  which a short held since inception (or over 3 or 1 years, using the buttons)
-  would have broken even, and the fee at which it would have earned as much as
-  owning SPY over the same dates. **Verdict** compares these with the quoted fee.
-  Click an ETF to see the full calculation, including a short-ETF/long-SPY pair.
-- **Theoretical fee from holdings.** Each holding's weight times its IBKR borrow
-  fee, summed, next to the quoted fee and the gap between them. Holdings without
-  an IBKR fee (cash, Treasuries, swaps) are charged the "fee for unmatched
-  holdings" rate, which you can change on the page.
+- **Window.** Since inception, 3 years, 1 year, or **Custom** with a date picker for
+  any start date. A date before the ETF existed starts at its inception (the page says
+  so), and a weekend or holiday moves to the next trading day.
+- **Returns, risk-free rate and beta.** Annualized total returns for the ETF and SPY
+  over the window, the T-bill rate over the same dates (Yahoo `^IRX`, or FRED's
+  3-month bill rate as a fallback), and the ETF's beta to SPY from the last year of
+  daily returns.
+- **Beta-adjusted break-even fees.** A short earns the risk-free rate on its proceeds,
+  so shorting SPY costs `RFR − SPY return` a year per −1.00 beta. Shorting the ETF at
+  fee `f`, levered to −1.00 beta, costs `(RFR − ETF return − f) ÷ beta`.
+  - *Short profits, after RFR:* `f = RFR − ETF return`.
+  - *Beta-adjusted vs shorting SPY:* `f = beta × (SPY return − RFR) − (ETF return − RFR)`.
+  - Example: SPY +10%, RFR 4% → SPY costs −6% per −1.00 beta. An ETF with beta 0.2
+    returning +5% costs −1% at no fee, −5% levered ×5, so its break-even fee is 0.2%.
+- **Hedge cost per −1.00 beta** at the quoted fee, next to SPY's.
+- **Verdict.** Worthwhile when the quoted fee is at or under the beta-adjusted
+  break-even. Betas under 0.1 are marked "Low beta: not a SPY hedge".
+  Click an ETF to see the full calculation, plus the previous (unadjusted) break-evens.
+- **Theoretical fee from holdings.** Every position's exposure (as a share of net
+  assets, not re-scaled) times its borrow fee, summed:
+  - stocks and ETFs: their IBKR fee, matched by ISIN, CUSIP, ticker, IBKR's non-US
+    country files, or a unique exact company name;
+  - swaps, futures and options: looked through to the stock or index they track, using
+    notional (or delta-adjusted) exposure, so a 2x single-stock ETF comes out at about
+    2 × that stock's fee. Index swaps use the components in the filing, the fund's own
+    stock holdings, or an ETF that holds the index (edit `INDEX_PROXIES` in `etf.py`);
+  - short exposure: 0%;
+  - cash, T-bills, Treasuries, money market funds and repo: the **fee for cash &
+    T-bills** setting (0% by default);
+  - bonds and anything unmatched: the **fee for unmatched holdings** setting.
+
+  Click an ETF to see every position with its fee and how it was matched, or download
+  them as a CSV. `/api/etf/holdings?symbol=TSLL` returns the same list as JSON.
 
 The method is written out at the bottom of the page.
 
@@ -88,6 +112,21 @@ of" date in each ETF's details can be a few months old.
 
 - `DEFAULT_ETFS`: the starting list for new visitors.
 - `GC_RATE`: the starting "fee for unmatched holdings" (default `0.25`).
+- `CASH_RATE`: the starting "fee for cash & T-bills" (default `0`).
+
+### Checking the holdings match
+
+With internet access and `SEC_USER_AGENT` set, this prints how much of each ETF's
+holdings get an IBKR fee, under the original code and the current one:
+
+```
+python tools/match_report.py TSLL NVDL CONL MSTU SOXL IVV IWM EFA HYG TSLA
+```
+
+### Tests
+
+`python -m unittest discover -s tests` runs the tests. They use small sample files in
+`tests/fixtures`, so they don't need internet access.
 
 ## Good to know
 
