@@ -5,7 +5,7 @@ set PY=python
 where python >nul 2>nul || set PY=py
 %PY% -c "import yfinance" 2>nul || (
   echo First run: installing yfinance...
-  %PY% -m pip install yfinance
+  %PY% -m pip install -r requirements.txt
 )
 start "" http://localhost:8000
 %PY% app.py

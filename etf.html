@@ -169,8 +169,8 @@
   .seg button { background: none; border: 0; padding: 7px 12px; color: var(--muted); font-weight: 600; font-size: 14px; }
   .seg button + button { border-left: 1px solid var(--rule); }
   .seg button[aria-pressed="true"] { background: var(--ink); color: var(--surface); }
-  .page { max-width: 1440px; }
-  #etfTable { min-width: 1340px; }
+  .page { max-width: 1600px; }
+  #etfTable { min-width: 1400px; }
   .settings input[type=date] { flex: none; width: 168px; text-transform: none; padding: 6px 10px; font-size: 15px; }
   .date-error { color: var(--down); font-size: 13px; }
   .cellsub { display: block; font-size: 12px; color: var(--muted); font-weight: 400; margin-top: 2px; white-space: nowrap; }
@@ -182,14 +182,14 @@
   .holdtools { display: flex; flex-wrap: wrap; gap: 4px 16px; align-items: center; margin-top: 8px; }
   #etfTable thead th { white-space: normal; vertical-align: bottom; }
   #etfTable thead th.sortable button { line-height: 1.25; }
-  #etfTable td.verdict-cell { white-space: normal; min-width: 150px; max-width: 230px; }
+  #etfTable td.verdict-cell { white-space: normal; min-width: 140px; max-width: 200px; }
   #etfTable .mini th, #etfTable .mini td { padding: 5px 8px; }
   #etfTable thead th.sortable { min-width: 62px; }
-  #etfTable .name { max-width: 170px; }
+  #etfTable .name { max-width: 140px; }
   #etfTable td.nowrap { white-space: nowrap; }
-  #etfTable th, #etfTable td { padding-left: 9px; padding-right: 9px; }
-  #etfTable thead th.sortable button { padding: 12px 9px; }
-  #etfTable td.fee { min-width: 96px; }
+  #etfTable th, #etfTable td { padding-left: 7px; padding-right: 7px; }
+  #etfTable thead th.sortable button { padding: 12px 7px; }
+  #etfTable td.fee { min-width: 84px; }
   #etfTable thead th:first-child { position: sticky; left: 0; background: var(--surface); z-index: 1; }
   #etfTable td.sym { z-index: 1; }
   th .sub2 { display: block; font-weight: 500; font-size: 11px; }
@@ -288,8 +288,10 @@
         <tr>
           <th class="sortable" data-key="symbol"><button type="button">ETF</button></th>
           <th class="sortable" data-key="aum"><button type="button">AUM</button></th>
+          <th class="sortable" data-key="price"><button type="button">Price<span class="sub2">latest</span></button></th>
           <th class="sortable" data-key="fee"><button type="button">Quoted fee<span class="sub2">IBKR, % / yr</span></button></th>
-          <th class="sortable" data-key="shares"><button type="button">Available</button></th>
+          <th class="sortable" data-key="shares"><button type="button">Available<span class="sub2">shares</span></button></th>
+          <th class="sortable" data-key="avail_value"><button type="button">$ available<span class="sub2">price × shares</span></button></th>
           <th class="sortable" data-key="theo"><button type="button">Theoretical<span class="sub2">from holdings</span></button></th>
           <th class="sortable" data-key="mis"><button type="button">Gap<span class="sub2">quoted − theo, pts</span></button></th>
           <th class="sortable" data-key="etf_ann"><button type="button">ETF return<span class="sub2">total, / yr</span></button></th>
@@ -407,6 +409,7 @@ function view(sym) {
   const beta = h.beta || {};
   Object.assign(v, {
     name: r.name || q.name, aum: r.aum, fee: q.fee, shares: q.shares, plus: q.plus,
+    price: r.price, avail_value: r.avail_value,
     theo: theo ? theo.fee : null, w, werr: raw && raw.error ? raw.error : null, raw,
     etf_ann: w ? w.etf_ann : null, spy_ann: w ? w.spy_ann : null, rfr: w ? w.rfr_ann : null,
     beta: beta.beta, betaInfo: beta,
@@ -480,13 +483,25 @@ function render() {
     symTd.append(btn);
 
     if (!r) {
-      const td = tr.insertCell(); td.colSpan = 13; td.className = "note"; td.textContent = "Loading";
+      const td = tr.insertCell(); td.colSpan = 15; td.className = "note"; td.textContent = "Loading";
     } else {
       tr.insertCell().textContent = isNum(v.aum) ? "$" + compact(v.aum) : dash;
+      const pr = tr.insertCell();
+      pr.textContent = isNum(v.price) ? "$" + v.price.toFixed(2) : dash;
+      pr.title = !meta.prices_enabled ? "Prices are turned off (SHOW_PRICES=off)" :
+        r.price_src === "live" ? "Latest price from Yahoo Finance" :
+        r.price_src === "close" ? `Last close, ${r.last_date}` : "No price from Yahoo";
+      if (!isNum(v.price)) pr.className = "dim";
       const feeTd = tr.insertCell();
       if (!r.quote.listed) { feeTd.className = "note nowrap"; feeTd.textContent = "Not in IBKR file"; }
       else feeCell(feeTd, v.fee);
       const sh = tr.insertCell(); sh.textContent = isNum(v.shares) ? compact(v.shares) + (v.plus ? "+" : "") : dash;
+      const av = tr.insertCell();
+      av.textContent = isNum(v.avail_value) ? "$" + compact(v.avail_value) + (v.plus ? "+" : "") : dash;
+      av.title = isNum(v.avail_value)
+        ? `${isNum(v.price) ? "$" + v.price.toFixed(2) : ""} × ${isNum(v.shares) ? v.shares.toLocaleString() : ""} shares IBKR has to lend${v.plus ? " (IBKR reports more than this)" : ""}`
+        : "Needs both a price and IBKR's share count";
+      if (!isNum(v.avail_value)) av.className = "dim";
 
       const th = tr.insertCell();
       const hd = r.holdings || {};
@@ -557,7 +572,7 @@ function kv(dl, label, value, cls) {
 
 function detailRow(v) {
   const tr = el("tr", "detail");
-  const td = tr.insertCell(); td.colSpan = 15;
+  const td = tr.insertCell(); td.colSpan = 17;
   const r = v.r;
   if (!r) { td.textContent = "Loading"; return tr; }
   const grid = el("div", "detail-grid");
@@ -880,7 +895,8 @@ document.querySelectorAll("#etfTable th.sortable").forEach(th => {
   });
 });
 $("csvBtn").addEventListener("click", () => {
-  const head = ["ETF", "Name", "AUM", "Quoted fee %/yr", "Shares available", "Theoretical fee %/yr",
+  const head = ["ETF", "Name", "AUM", "Price", "Price source", "Quoted fee %/yr", "Shares available",
+    "Value available ($, price x shares)", "Theoretical fee %/yr",
     "Quoted minus theoretical (pts)", "Holdings source", "Holdings as of", "Holdings matched (% of non-cash weight)",
     "Gross long stock exposure", "Cash & T-bills weight", "Assumed-rate weight",
     "Window", "Requested start", "Start", "End", "Started at inception instead", "ETF total return", "SPY total return",
@@ -894,7 +910,8 @@ $("csvBtn").addEventListener("click", () => {
   for (const v of etfs.map(view)) {
     const w = v.w || {}, hd = (v.r && v.r.holdings) || {}, t = hd.theo || {}, b = v.betaInfo || {};
     if (v.w) dates.add(`${w.start}-to-${w.end}`);
-    lines.push(csvLine([v.symbol, v.name, v.aum, v.fee, v.shares, v.theo, v.mis, hd.source, hd.as_of,
+    lines.push(csvLine([v.symbol, v.name, v.aum, v.price, v.r && v.r.price_src === "close" ? `last close ${v.r.last_date}` : (v.r && v.r.price_src) || "",
+      v.fee, v.shares, v.avail_value, v.theo, v.mis, hd.source, hd.as_of,
       isNum(t.coverage) ? t.coverage * 100 : null, t.gross_long_equity, t.cash_weight, t.assumed_weight,
       win === "custom" ? `custom from ${customStart}` : win, w.requested_start, w.start, w.end, w.clamped ? "yes" : "",
       w.etf_total, w.spy_total, w.etf_ann, w.spy_ann, w.rfr_total, w.rfr_ann, b.beta, b.days, b.corr,

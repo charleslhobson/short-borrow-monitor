@@ -179,6 +179,8 @@
   #metricTable { width: auto; min-width: 100%; }
   #metricTable td.wrap { white-space: normal; min-width: 160px; text-align: left; }
   .loading { color: var(--muted); }
+  #metricTable td.calc { text-decoration: underline dotted; text-decoration-color: var(--muted); text-underline-offset: 3px; }
+  #metricTable td.why { color: var(--muted); cursor: help; }
 
   /* ---------- dialog ---------- */
   dialog {
@@ -341,7 +343,7 @@
 
   <footer>
     <p><strong>Availability:</strong> Available means 10,000 or more shares to lend. Limited means fewer than 10,000. None means no shares to lend right now, so a new short isn't possible.</p>
-    <p>Borrow fees, rebates and share counts come from Interactive Brokers' public stock loan file and refresh about every 15 minutes. Fees are yearly rates, charged daily. <span id="priceSource">Prices and all other metrics come from Yahoo Finance and may be delayed; company data refreshes every 15 minutes, performance every 30.</span></p>
+    <p>Borrow fees, rebates and share counts come from Interactive Brokers' public stock loan file and refresh about every 15 minutes. Fees are yearly rates, charged daily. <span id="priceSource">Prices and all other metrics come from Yahoo Finance and may be delayed. When Yahoo's main quote data leaves a value out, it's worked out from Yahoo's price history, financial statements, dividend and split history, analyst data or earnings calendar (or SEC filings), and shown with a dotted underline; hover a cell to see where a value came from. A blank cell says why: <em>n/a</em> doesn't apply (for example P/E for a fund), <em>none</em> means there isn't one (no dividend, no splits, no analyst coverage), <em>closed</em> means no live quote outside market hours, and <em>–</em> means no source has it. Quotes refresh every 15 minutes, price history every 30, financial statements and analyst data every 12 hours.</span></p>
     <p>For information only. Not investment advice. The rate you're charged by your broker may differ.</p>
   </footer>
 </div>
@@ -385,7 +387,7 @@ const AVAIL_ORDER = { available: 0, limited: 1, none: 2 };
 let config = { default_tickers: [], prices_enabled: true };
 let catalog = [];                 // metric groups from the server
 const metricByKey = new Map();
-let perfKeys = new Set();
+let reasons = {}, sources = {}, alwaysCalc = new Set();   // from /api/catalog
 let tickers = [];
 let rows = [];                    // borrow + price rows from /api/quotes
 let sortKey = null, sortDir = 1;
@@ -685,10 +687,28 @@ function borrowValue(sym, key) {
   if (!r || !r.listed) return null;
   return { ibkr_fee: r.fee, ibkr_rebate: r.rebate, ibkr_shares: r.shares, ibkr_avail: r.availability }[key];
 }
-function valueFor(sym, key) {
-  if (key.startsWith("ibkr_")) return borrowValue(sym, key);
+// One metric cell: {value, src, note} when there's a value, {why, note} when there isn't, {loading} while it loads.
+const LOCAL_REASONS = { no_ibkr: ["–", "Not in IBKR's borrow file"], no_data: ["–", "No data"] };
+function reasonOf(code) { return reasons[code] || LOCAL_REASONS[code] || LOCAL_REASONS.no_data; }
+function sourceLabel(src) { return src === "ibkr" ? "Interactive Brokers" : (sources[src] || [""])[0]; }
+function isCalculated(key, src) { return !!(sources[src] && sources[src][1]) && !alwaysCalc.has(key); }
+function cellInfo(sym, key) {
+  if (key.startsWith("ibkr_")) {
+    const r = rows.find(x => x.symbol === sym);
+    if (!r) return { loading: true };
+    if (!r.listed) return { why: "no_ibkr" };
+    const v = borrowValue(sym, key);
+    return v == null ? { why: "no_data" } : { value: v, src: "ibkr" };
+  }
   const m = metricRows.get(sym);
-  return m && m.data ? m.data[key] : null;
+  if (!m || (m.loading || []).includes(key)) return { loading: true };
+  const d = m.data || {};
+  if (d[key] != null) return { value: d[key], src: (m.src || {})[key], note: (m.note || {})[key] };
+  return { why: (m.why || {})[key] || "no_data", note: (m.note || {})[key] };
+}
+function valueFor(sym, key) {
+  const c = cellInfo(sym, key);
+  return c.value === undefined ? null : c.value;
 }
 
 function renderMetricHead() {
@@ -745,16 +765,24 @@ function renderMetricBody() {
         ? "Yahoo Finance has no data for this ticker." : info.error + ". Trying again shortly.";
       continue;
     }
-    const loading = !onlyBorrow && (!info || info.pending);
     for (const k of tab.metrics) {
       const m = metricByKey.get(k);
       const td = tr.insertCell();
-      if (loading && !k.startsWith("ibkr_")) { td.textContent = "…"; td.className = "loading"; continue; }
-      if (m.fmt === "avail") { chip(td, r[k]); continue; }
-      const f = formatMetric(m, r[k]);
-      td.textContent = f.text;
-      td.className = [f.cls || "", f.wrap ? "wrap" : ""].join(" ").trim();
+      const c = cellInfo(r.symbol, k);
       if (m.fmt === "text") td.style.textAlign = "left";
+      if (c.loading) { td.textContent = "…"; td.className = "loading"; td.title = "Loading"; continue; }
+      if (c.value == null) {                     // no value: a short word, the reason on hover
+        const [word, text] = reasonOf(c.why);
+        td.textContent = word;
+        td.className = "dim why";
+        td.title = c.note ? `${text} (${c.note})` : text;
+        continue;
+      }
+      if (m.fmt === "avail") { chip(td, c.value); continue; }
+      const f = formatMetric(m, c.value);
+      td.textContent = f.text;
+      td.className = [f.cls || "", f.wrap ? "wrap" : "", isCalculated(k, c.src) ? "calc" : ""].join(" ").trim();
+      td.title = [sourceLabel(c.src), c.note].filter(Boolean).join(": ");
     }
   }
 }
@@ -769,18 +797,17 @@ async function refreshMetrics() {
     renderMetricBody();
     return;
   }
-  const needPerf = yahooKeys.some(k => perfKeys.has(k));
   const missing = tickers.filter(s => !metricRows.has(s)).length;
   if (missing) $("metricHint").textContent = `Loading ${missing} stock${missing > 1 ? "s" : ""} from Yahoo Finance…`;
   let pending = 0;
   try {
-    const url = `/api/metrics?symbols=${encodeURIComponent(tickers.join(","))}&perf=${needPerf ? 1 : 0}`;
+    const url = `/api/metrics?symbols=${encodeURIComponent(tickers.join(","))}&keys=${encodeURIComponent(yahooKeys.join(","))}`;
     const d = await (await fetch(url, { cache: "no-store" })).json();
     for (const r of d.rows) metricRows.set(r.symbol, r);
     pending = d.pending;
     $("metricHint").textContent = pending
       ? `Still loading ${pending} stock${pending > 1 ? "s" : ""} from Yahoo Finance…`
-      : "From Yahoo Finance. Values may be delayed.";
+      : "From Yahoo Finance; values may be delayed. Dotted underline = calculated here. Hover a cell for its source or why it's blank.";
   } catch {
     $("metricHint").textContent = "Can't reach the server. Retrying.";
     pending = 1;
@@ -930,8 +957,8 @@ $("metricCsvBtn").addEventListener("click", () => {
   const tab = currentTab(); if (!tab) return;
   const head = ["Ticker", ...tab.metrics.map(k => metricByKey.get(k).label)];
   const lines = tickers.map(s => [s, ...tab.metrics.map(k => {
-    const m = metricByKey.get(k), v = valueFor(s, k);
-    if (v == null) return "";
+    const m = metricByKey.get(k), c = cellInfo(s, k), v = c.value;
+    if (v == null) return c.loading ? "" : reasonOf(c.why)[1];
     if (m.fmt === "date" || m.fmt === "date_ms") return formatMetric(m, v).text;
     if (m.fmt === "avail") return AVAIL[v];
     return v;
@@ -960,9 +987,11 @@ dlg.addEventListener("click", (e) => { if (e.target === dlg) closeDialog(); });
   try {
     const c = await (await fetch("/api/catalog")).json();
     catalog = c.groups || [];
+    reasons = c.reasons || {};
+    sources = c.sources || {};
+    alwaysCalc = new Set(c.always_calculated || []);
   } catch {}
   for (const g of catalog) for (const m of g.metrics) metricByKey.set(m.key, m);
-  perfKeys = new Set((catalog.find(g => g.id === "performance") || { metrics: [] }).metrics.map(m => m.key));
 
   if (!config.prices_enabled) {
     document.querySelectorAll(".price-col").forEach(el => el.remove());

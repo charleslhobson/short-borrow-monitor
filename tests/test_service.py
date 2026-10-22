@@ -83,6 +83,8 @@ class ServiceTests(unittest.TestCase):
         rows = {r["symbol"]: r for r in out["rows"]}
 
         tsll = rows["TSLL"]
+        self.assertAlmostEqual(tsll["last_close"], float(HIST["TSLL"]["close"].iloc[-1]))
+        self.assertEqual(tsll["last_date"], "2026-10-21")
         self.assertAlmostEqual(tsll["holdings"]["theo"]["fee"], 0.60)
         self.assertLessEqual(len(tsll["holdings"]["theo"]["top"]), etf.TOP_HOLDINGS_SHOWN)
         self.assertNotIn("rows", tsll["holdings"])                # full list only from the holdings endpoint
