@@ -14,8 +14,9 @@ IBKR login or TWS is needed. Prices come from Yahoo Finance through the free
 1. Sign in to GitHub and click **New repository**.
 2. Name it `short-borrow-monitor`, leave it **Public** or choose **Private**, and click **Create repository**.
 3. Click **uploading an existing file**.
-4. Drag in every file from this folder: `app.py`, `etf.py`, `index.html`,
-   `etf.html`, `render.yaml`, `requirements.txt` and `README.md`.
+4. Drag in every file and folder from this folder (the `.py` and `.html` files,
+   `render.yaml`, `requirements.txt`, `README.md`, and the `static`, `tools`, `tests`
+   and `.github` folders).
 5. Click **Commit changes**.
 
 ## 2. Put it online with Render
@@ -134,6 +135,24 @@ Paste your ETF list into the box (single stocks work too) and each one gets a ro
 
   Click an ETF to see every position with its fee and how it was matched, or download
   them as a CSV. `/api/etf/holdings?symbol=TSLL` returns the same list as JSON.
+- **Price vs total return chart** (in each ETF's details). Two lines over the same
+  dates as the table's window:
+  - **Market price**: what the shares trade at (adjusted for splits only);
+  - **Total return**: the value of one share bought at the window's start with every
+    distribution reinvested (Yahoo's adjusted close, the same series the table's
+    returns use). Both start at the same price.
+
+  The shaded gap between them is what the distributions added. A fund can show a
+  falling price and a rising total return at the same time: high-payout funds (covered
+  call, "income" and many leveraged funds) pay out a lot, including return of capital,
+  and each payout lowers the share price by about the amount paid. A short owes every
+  one of those payouts, which is why the screen's break-evens use total return.
+  Switch to **% change** to compare both with SPY's total return; small marks along the
+  bottom are ex-distribution dates. Download the chart's data as a CSV.
+  `/api/etf/chart?symbol=TSLL&win=1y` returns it as JSON (`win` is `inception`, `3y`,
+  `1y`, or `custom` with `&start=YYYY-MM-DD`).
+- **Borrow fee history chart** (in each ETF's details), the same as on the Stocks page:
+  see [Borrow fee history](#borrow-fee-history).
 
 The method is written out at the bottom of the page.
 
@@ -160,6 +179,8 @@ of" date in each ETF's details can be a few months old.
 - `CASH_RATE`: the starting "fee for cash & T-bills" (default `0`).
 - `RFR_SPREAD`: the starting spread below the T-bill rate for interest on short
   proceeds (default `1.0`, % per year).
+- `DATABASE_URL`, `STORAGE_LIMIT_MB`, `SHARES_CHANGE_PCT`: see
+  [Borrow fee history](#borrow-fee-history).
 
 ### Checking the holdings match
 
@@ -173,7 +194,82 @@ python tools/match_report.py TSLL NVDL CONL MSTU SOXL IVV IWM EFA HYG TSLA
 ### Tests
 
 `python -m unittest discover -s tests` runs the tests. They use small sample files in
-`tests/fixtures`, so they don't need internet access.
+`tests/fixtures`, so they don't need internet access. The iBorrowDesk samples follow
+the shape of its public data feed with made-up values. To also test the database code
+against a real Postgres, set `TEST_DATABASE_URL` to an empty test database (its
+tables are dropped and recreated).
+
+## Borrow fee history
+
+Click the ▶ next to any ticker on the Stocks page (or open an ETF on the ETF screen)
+to see its borrow fee and shares available over time:
+
+- **Borrow fee** as a step line (left axis), **shares available** as a light area
+  (right axis). Hover for the exact fee, rebate, shares and where the reading came from.
+- **1M, 3M, 6M, 1Y, 3Y, All**, a log scale for the fee, and **Download CSV**.
+- **Where the data comes from:**
+  - **This site's own readings** of IBKR's file, every hour, from the day you set it up.
+  - **Older history from [iBorrowDesk](https://iborrowdesk.com)**, which has logged
+    IBKR's file for years. It's fetched once per ticker, the first time anyone opens
+    that ticker's chart (that first chart takes a few seconds), and saved. A dotted
+    line marks where iBorrowDesk's history ends and this site's readings begin.
+  - **Shaded "not recorded"** stretches are 3+ hours when this site's recorder didn't
+    run. iBorrowDesk's data fills them where it can.
+- Only changes are saved: a new reading is stored when the fee changes, the rebate
+  moves more than 0.25 points, or shares available move 20% or more (or to or from
+  zero). The chart carries each value forward until the next change.
+
+Without a database the charts still work, using iBorrowDesk's data only.
+
+### Setting it up (about 10 minutes, free)
+
+1. **Create the database.** Sign up at https://neon.tech (the free plan is enough) and
+   create a project. Pick the region closest to your Render service (Render shows its
+   region on the service's page). On the project's dashboard click **Connect**, leave
+   **Connection pooling** on, and copy the connection string. It starts with
+   `postgresql://` and ends with `sslmode=require`. Treat it like a password: never
+   put it in a file in the repository.
+2. **Give it to the website.** In Render, open your service → **Environment** →
+   **Add Environment Variable**: key `DATABASE_URL`, value the connection string.
+   Save; the site restarts and creates its tables.
+3. **Give it to the hourly recorder.** The website sleeps on Render's free plan, so a
+   GitHub Actions job (`.github/workflows/record-borrow.yml`) records IBKR's file every
+   hour instead. In GitHub, open the repository → **Settings** → **Secrets and
+   variables** → **Actions** → **New repository secret**: name `DATABASE_URL`, value
+   the same connection string.
+4. **Run it once by hand.** In GitHub, open **Actions** (enable workflows if asked) →
+   **Record borrow** → **Run workflow**. Open the run and check the log ends with a
+   line like `14,812 tickers in file, 14,812 points saved... Database 9.3 MB of 500 MB`.
+   After that it runs by itself every hour at 17 minutes past.
+
+The website also records every 30 minutes while it's awake, so readings keep coming
+while people use it. Two recorders can't save the same reading twice.
+
+### Good to know about the history
+
+- **Storage.** Neon's free plan holds 0.5 GB. Each saved reading takes about 120
+  bytes. The first run saves one reading per ticker (about 2 MB); after that, only
+  changes. My estimate is around 50 MB a month, but it depends on how often IBKR's
+  numbers move, so check the log's database size after a few days. After 180 days,
+  old readings are thinned to the last one of each day.
+  - `STORAGE_LIMIT_MB` (default `500`): the site and the recorder warn when the
+    database passes 80% of this.
+  - `SHARES_CHANGE_PCT` (default `20`): raise it (say to `40`) to save fewer
+    shares-available readings if the database grows too fast.
+  - `python tools/storage_estimate.py --watch 3 --every 60` downloads IBKR's file three
+    times an hour apart and projects the growth from real changes.
+- **GitHub Actions minutes.** Free for public repositories. Private repositories get
+  2,000 free minutes a month; the hourly recorder uses about 720.
+- **GitHub pauses scheduled jobs** in public repositories after 60 days with no
+  commits. If the charts show a long "not recorded" stretch, open **Actions** →
+  **Record borrow** and re-enable it. GitHub can also start scheduled runs late when
+  it's busy.
+- **iBorrowDesk is unofficial.** It's a free site that publishes IBKR's data, with no
+  documented API, so it may change or stop answering. This site asks it for at most
+  one ticker every 2 seconds, only when someone opens a chart, and remembers failures
+  for an hour. `python tools/check_iborrowdesk.py GME AAPL` checks it live and compares
+  its fees with IBKR's file.
+- `/api/borrow/history?symbol=GME&range=1y` returns a chart's data as JSON.
 
 ## Good to know
 
@@ -197,6 +293,8 @@ python tools/match_report.py TSLL NVDL CONL MSTU SOXL IVV IWM EFA HYG TSLA
   site goes against those terms. Running with `SHOW_PRICES` set to `off` avoids this.
 - **IBKR's borrow file:** it's publicly downloadable, but I couldn't find terms that
   say whether it may be republished. If the site gets real traffic, ask IBKR.
+- **iBorrowDesk's history:** the charts credit and link to iBorrowDesk. If the site
+  gets real traffic, ask its owner whether that use is welcome.
 
 ## Test on your own computer first (optional)
 

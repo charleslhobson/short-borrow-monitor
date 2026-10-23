@@ -11,10 +11,12 @@ Settings (environment variables):
     SHOW_PRICES       "on" (default) or "off" to hide the price columns
     DEFAULT_TICKERS   starting list for new visitors, e.g. "AAPL,TSLA,GME,AMC"
     PORT              set automatically by most hosts (default 8000)
+    DATABASE_URL      Postgres connection string (e.g. a free Neon database) for the
+                      borrow fee history charts; without it charts use iBorrowDesk only
+    STORAGE_LIMIT_MB  the database's size limit, for the "nearly full" warning (default 500)
 """
 
 import ftplib
-import io
 import json
 import math
 import os
@@ -26,7 +28,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from common import LRU, YAHOO, is_rate_limit
+from common import (FTP_FILE, FTP_HOST, FTP_USER, LRU, YAHOO, borrow_rank, download_usa,  # noqa: F401
+                    ftp_download, is_rate_limit, normalize, parse_borrow_text, to_float)
 
 APP_DIR = Path(__file__).resolve().parent
 PORT = int(os.environ.get("PORT", "8000"))
@@ -36,7 +39,6 @@ except ImportError:
     yf = None
 PRICES_ON = yf is not None and os.environ.get("SHOW_PRICES", "on").strip().lower() != "off"
 
-FTP_HOST, FTP_USER, FTP_FILE = "ftp2.interactivebrokers.com", "shortstock", "usa.txt"
 BORROW_MAX_AGE = 15 * 60       # re-download the borrow file every 15 minutes
 BORROW_RETRY = 60              # after a failed download, try again in 1 minute
 PRICE_MAX_AGE = 60             # each price is reused for up to 60 seconds
@@ -46,20 +48,8 @@ TOP_MIN_SHARES = 1000          # leaderboard ignores stocks with tiny inventory
 LIMITED_BELOW = 10_000         # under this many shares = "Limited"
 
 
-def normalize(text):
-    s = str(text).strip().upper().replace(" ", ".").lstrip("$")
-    return s if re.fullmatch(r"[A-Z0-9][A-Z0-9.\-]{0,9}", s) else None
-
-
 DEFAULT_TICKERS = [s for s in (normalize(x) for x in os.environ.get(
     "DEFAULT_TICKERS", "AAPL,TSLA,GME,AMC,BYND").split(",")) if s]
-
-
-def to_float(x):
-    try:
-        return float(x)
-    except (TypeError, ValueError):
-        return None
 
 
 def availability(entry):
@@ -71,48 +61,6 @@ def availability(entry):
 
 
 # ----------------------------- borrow data --------------------------------
-def borrow_rank(entry):
-    """When IBKR lists a stock twice, keep the row with a fee, then the one with more shares."""
-    shares = entry.get("shares")
-    return (entry.get("fee") is not None, shares if shares is not None else -1)
-
-
-def parse_borrow_text(text):
-    table, header, as_of = {}, None, ""
-    for line in text.splitlines():
-        if line.startswith("#BOF"):
-            as_of = " ".join(p.strip() for p in line.split("|")[1:3])
-        elif line.startswith("#SYM"):
-            header = [h.strip().lstrip("#").upper() for h in line.split("|")]
-        elif line.startswith("#") or not line.strip() or header is None:
-            continue
-        else:
-            row = dict(zip(header, (p.strip() for p in line.split("|"))))
-            sym = normalize(row.get("SYM", ""))
-            if not sym:
-                continue
-            raw = row.get("AVAILABLE", "")
-            digits = raw.replace(">", "").replace(",", "").strip()
-            entry = {
-                "name": row.get("NAME", "").title(),
-                "fee": to_float(row.get("FEERATE")),
-                "rebate": to_float(row.get("REBATERATE")),
-                "shares": int(digits) if digits.isdigit() else None,
-                "plus": raw.startswith(">"),
-                "isin": row.get("ISIN", "").upper() or None,
-            }
-            old = table.get(sym)
-            if old is None or borrow_rank(entry) > borrow_rank(old):
-                table[sym] = entry
-    return table, as_of
-
-
-def ftp_download(ftp, name):
-    buf = io.BytesIO()
-    ftp.retrbinary(f"RETR {name}", buf.write)
-    return buf.getvalue().decode("utf-8", errors="replace")
-
-
 class Borrow:
     def __init__(self):
         self.lock = threading.Lock()
@@ -120,9 +68,7 @@ class Borrow:
         self.fetched, self.refreshing = 0.0, False
 
     def _download(self):
-        with ftplib.FTP(FTP_HOST, timeout=30) as ftp:
-            ftp.login(FTP_USER, "")
-            return ftp_download(ftp, FTP_FILE)
+        return download_usa()
 
     def refresh(self):
         fetched = time.time()
@@ -137,6 +83,7 @@ class Borrow:
             with self.lock:
                 self.table, self.top, self.as_of, self.error = table, top, as_of, ""
             print(f"Borrow file loaded: {len(table):,} stocks, as of {as_of}", flush=True)
+            HISTORY.maybe_record(table, as_of)      # borrow fee history: at most every 30 minutes
         except Exception as e:
             fetched = time.time() - BORROW_MAX_AGE + BORROW_RETRY
             with self.lock:
@@ -217,6 +164,19 @@ class ForeignBorrow:
 
 BORROW = Borrow()
 FOREIGN = ForeignBorrow()
+
+
+def live_quote(sym):
+    """The latest IBKR file's row for one ticker, for the end of a history chart."""
+    table, _, as_of, _, _ = BORROW.snapshot()
+    entry = table.get(sym)
+    return (entry, as_of) if entry else None
+
+
+import borrow_history as history_mod      # borrow fee history charts (borrow_history.py)
+HISTORY = history_mod.HistoryService(history_mod.make_store(), live=live_quote)
+STATIC_DIR = APP_DIR / "static"
+STATIC_TYPES = {".js": "application/javascript; charset=utf-8", ".css": "text/css; charset=utf-8"}
 
 import etf as etf_mod                      # ETF short screen (etf.py)
 ETF = etf_mod.EtfService(yf, BORROW, FOREIGN) if yf is not None else None
@@ -320,8 +280,8 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
-    def _json(self, obj):
-        self._send(200, json.dumps(obj, separators=(",", ":")))
+    def _json(self, obj, code=200):
+        self._send(code, json.dumps(obj, separators=(",", ":")))
 
     def do_HEAD(self):
         self.do_GET()
@@ -336,6 +296,37 @@ class Handler(BaseHTTPRequestHandler):
         if path in ("/etf", "/etf.html"):
             return self._send(200, (APP_DIR / "etf.html").read_bytes(),
                               "text/html; charset=utf-8", "no-cache")
+        if path == "/api/etf/chart":
+            if ETF is None:
+                return self._json({"error": "yfinance is not installed on the server."}, 503)
+            sym = normalize(query.get("symbol", [""])[0])
+            if not sym:
+                return self._json({"error": "Give one ETF ticker, e.g. ?symbol=TSLL"}, 400)
+            win = query.get("win", [""])[0].lower()
+            years_raw = query.get("years", [""])[0].lower()
+            start = None
+            if win == "custom":
+                start, err = etf_mod.parse_start_date(query.get("start", [""])[0])
+                if start is None:
+                    return self._json({"error": err or "Give a start date as YYYY-MM-DD."}, 400)
+                years = None
+            elif win:
+                if win not in etf_mod.CHART_WINDOWS:
+                    return self._json({"error": "win must be inception, 3y, 1y or custom"}, 400)
+                years = etf_mod.CHART_WINDOWS[win]
+            elif query.get("start", [""])[0]:
+                start, err = etf_mod.parse_start_date(query.get("start", [""])[0])
+                if start is None:
+                    return self._json({"error": err}, 400)
+                years = None
+            elif years_raw in ("", "max"):
+                years = None
+            elif years_raw.isdigit() and 1 <= int(years_raw) <= 50:
+                years = int(years_raw)
+            else:
+                return self._json({"error": "years must be a whole number of years or max"}, 400)
+            out = ETF.chart(sym, years, start)
+            return self._json(out, 404 if out.get("unknown") else 200)
         if path in ("/api/etf", "/api/etf/holdings"):
             if ETF is None:
                 return self._json({"error": "yfinance is not installed on the server."})
@@ -355,6 +346,17 @@ class Handler(BaseHTTPRequestHandler):
             out["start_error"] = start_error
             add_prices(out, PRICES.get(syms) if PRICES_ON else {}, PRICES_ON)
             return self._json(out)
+        if path.startswith("/static/"):
+            name = path[len("/static/"):]
+            f = STATIC_DIR / name
+            if (re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", name) and f.suffix in STATIC_TYPES
+                    and f.is_file()):
+                return self._send(200, f.read_bytes(), STATIC_TYPES[f.suffix], "public, max-age=86400")
+            return self._send(404, '{"error":"not found"}')
+        if path == "/api/borrow/history":
+            BORROW.ensure_fresh()
+            out = HISTORY.history(query.get("symbol", [""])[0], query.get("range", ["1y"])[0].lower())
+            return self._json(out, 400 if "error" in out else 200)
         if path == "/healthz":
             return self._send(200, "ok", "text/plain")
         if path == "/api/config":
@@ -364,7 +366,9 @@ class Handler(BaseHTTPRequestHandler):
                                "cash_default": etf_mod.CASH_DEFAULT,
                                "spread_default": etf_mod.RFR_SPREAD_DEFAULT,
                                "prices_enabled": PRICES_ON,
-                               "limited_below": LIMITED_BELOW})
+                               "limited_below": LIMITED_BELOW,
+                               "history": {"recording": HISTORY.recording,
+                                           "storage_warning": HISTORY.storage_warning()}})
 
         if path == "/api/quotes":
             BORROW.ensure_fresh()

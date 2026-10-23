@@ -17,3 +17,5 @@ services:
         value: "0.25"
       - key: SEC_USER_AGENT
         sync: false
+      - key: DATABASE_URL          # borrow fee history (README: Borrow fee history)
+        sync: false

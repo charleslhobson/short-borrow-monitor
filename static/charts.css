@@ -1,0 +1,35 @@
+/* Charts shared by the Stocks page and the ETF screen (borrow-chart.js, tr-chart.js).
+   Colors come from each page's CSS variables. */
+.bchart, .trchart { position: relative; font-size: 13px; }
+.cbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin: 0 0 8px; }
+.cseg { display: inline-flex; border: 1px solid var(--rule); border-radius: 8px; overflow: hidden; background: var(--surface); }
+.cseg button { background: none; border: 0; padding: 5px 10px; color: var(--muted); font-weight: 600; font-size: 13px; }
+.cseg button + button { border-left: 1px solid var(--rule); }
+.cseg button[aria-pressed="true"] { background: var(--ink); color: var(--surface); }
+.ccheck { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); cursor: pointer; user-select: none; }
+.ccheck input[type=checkbox] { flex: none; width: 15px; height: 15px; margin: 0; padding: 0; accent-color: var(--ink); }
+.ccheck.off { opacity: .45; cursor: default; }
+.cbar .quiet { margin-left: auto; }
+.csummary { margin: 0 0 6px; font-weight: 600; font-size: 14px; color: var(--ink); }
+.csummary .pos { color: var(--up); }
+.csummary .neg { color: var(--down); }
+.cstatus { color: var(--muted); font-style: italic; min-height: 18px; margin: 4px 0; }
+.cstatus button { font-style: normal; }
+.cplot { position: relative; width: 100%; }
+.cplot .u-wrap { max-width: 100%; }
+.ctip {
+  position: absolute; z-index: 5; pointer-events: none; display: none; min-width: 150px; max-width: 260px;
+  background: var(--surface); color: var(--ink); border: 1px solid var(--rule); border-radius: 8px;
+  padding: 7px 9px; font-size: 12px; line-height: 1.4; box-shadow: 0 4px 14px rgba(0, 0, 0, .14); white-space: normal;
+}
+.ctip b { display: block; margin-bottom: 2px; }
+.ctip .k { color: var(--muted); }
+.ctip .src { display: block; margin-top: 3px; color: var(--muted); font-style: italic; }
+.clegend { display: flex; flex-wrap: wrap; gap: 4px 16px; margin-top: 6px; color: var(--muted); font-size: 12px; }
+.clegend span { display: inline-flex; align-items: center; gap: 6px; }
+.clegend i { display: inline-block; width: 16px; height: 0; border-top: 2px solid currentColor; }
+.clegend i.area { height: 10px; border: 0; border-radius: 2px; }
+.clegend i.dots { border-top-style: dashed; }
+.clegend i.tick { width: 2px; height: 10px; border: 0; }
+.cnote { margin: 6px 0 0; color: var(--muted); font-size: 12px; }
+.cnote a { color: inherit; }
