@@ -30,14 +30,26 @@ def _bars(start, seed, drift=0.0004, beta=1.0, market=None, divs=None, splits=No
     close = 50 * np.cumprod(1 + rets)
     df = pd.DataFrame({
         "Open": close * 0.995, "High": close * 1.01, "Low": close * 0.99, "Close": close,
-        "Adj Close": close * 0.98, "Volume": (1e6 + 1e5 * r.random(len(idx))).round(),
+        "Volume": (1e6 + 1e5 * r.random(len(idx))).round(),
         "Dividends": 0.0, "Stock Splits": 0.0}, index=idx)
     for d, v in (divs or {}).items():
         df.loc[df.index[df.index >= pd.Timestamp(d)][0], "Dividends"] = v
     for d, v in (splits or {}).items():
         df.loc[df.index[df.index >= pd.Timestamp(d)][0], "Stock Splits"] = v
+    df["Adj Close"] = close * adjust_factor(df["Close"], df["Dividends"])
     df.index = df.index.tz_localize(TZ)
     return df
+
+
+def adjust_factor(close, dividends):
+    """Yahoo's dividend adjustment: every close before an ex-date is multiplied by
+    (1 - dividend / the close the day before the ex-date)."""
+    factor = np.ones(len(close))
+    c, d = close.to_numpy(), dividends.to_numpy()
+    for i in np.nonzero(d)[0]:
+        if i > 0:
+            factor[:i] *= 1 - d[i] / c[i - 1]
+    return factor
 
 
 MARKET = np.random.default_rng(99).normal(0.0004, 0.01, len(pd.bdate_range("2000-01-03", END)))
@@ -184,7 +196,10 @@ class Ticker:
                 "regularMarketTime": pd.Timestamp("2026-10-21 16:00", tz=TZ),
                 "firstTradeDate": df.index[0], "exchangeTimezoneName": TZ, "longName": self.p["info"] and
                 self.p["info"].get("longName") or "Fail Corp"}
-            if auto_adjust:
+            if auto_adjust:                    # like yfinance: prices become the adjusted ones
+                ratio = df["Adj Close"] / df["Close"]
+                for col in ("Open", "High", "Low", "Close"):
+                    df[col] = df[col] * ratio
                 df = df.drop(columns=["Adj Close"])
             return df
         # 5-minute bars with pre- and after-hours for the last two days

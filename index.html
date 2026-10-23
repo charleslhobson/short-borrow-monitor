@@ -8,6 +8,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/uPlot.min.css?v=1.6.30">
+<link rel="stylesheet" href="/static/charts.css?v=1">
 <style>
   :root {
     --bg: #E8EDF2;
@@ -105,6 +107,15 @@
 
   td.sym { position: sticky; left: 0; background: var(--surface); }
   tbody tr:hover td.sym { background: var(--row-hover); }
+  td.sym button.expand {
+    background: none; border: 0; color: inherit; padding: 0; text-align: left; display: flex; gap: 8px; align-items: flex-start;
+  }
+  td.sym .chev { color: var(--muted); font-size: 12px; margin-top: 4px; transition: transform .15s; }
+  button.expand[aria-expanded="true"] .chev { transform: rotate(90deg); }
+  tr.detail td { background: var(--bg); white-space: normal; text-align: left; padding: 16px 14px 20px; }
+  tr.detail:hover td { background: var(--bg); }
+  .bdetail { position: sticky; left: 14px; width: min(1000px, calc(100vw - 76px)); }
+  .bdetail h3 { font-size: 15px; margin: 0 0 8px; }
   .ticker { display: block; font-weight: 700; font-size: 16px; }
   .name { display: block; font-size: 12px; color: var(--muted); max-width: 210px; overflow: hidden; text-overflow: ellipsis; }
   td.price { font-weight: 600; font-size: 16px; }
@@ -376,6 +387,8 @@
     </div>
   </form>
 </dialog>
+<script src="/static/uPlot.iife.min.js?v=1.6.30"></script>
+<script src="/static/borrow-chart.js?v=1"></script>
 <script>
 const $ = (id) => document.getElementById(id);
 const STORE_KEY = "sbm.tickers.v1";
@@ -392,6 +405,8 @@ let tickers = [];
 let rows = [];                    // borrow + price rows from /api/quotes
 let sortKey = null, sortDir = 1;
 const rowEls = new Map();
+const openRows = new Set();       // watchlist rows showing their borrow fee history
+const detailRows = new Map();     // symbol -> {tr, ctl}: the open history row and its chart
 
 let tabs = [];                    // [{id, name, preset, metrics: [keys]}]
 let activeTab = "borrow";
@@ -516,19 +531,62 @@ function sorted(list, key, dir) {
   });
 }
 
+const watchCols = () => config.prices_enabled ? 8 : 6;
+function historyRow(sym) {
+  let d = detailRows.get(sym);
+  if (!d) {
+    const tr = document.createElement("tr");
+    tr.className = "detail";
+    const td = tr.insertCell();
+    const box = document.createElement("div"); box.className = "bdetail";
+    const h = document.createElement("h3"); h.textContent = `${sym} borrow fee history`;
+    const host = document.createElement("div");
+    box.append(h, host);
+    td.append(box);
+    let ctl = { destroy() {} };
+    if (window.BorrowChart) ctl = BorrowChart.mount(host, sym);
+    else host.textContent = "The chart couldn't load. Reload the page to try again.";
+    d = { tr, ctl };
+    detailRows.set(sym, d);
+  }
+  d.tr.cells[0].colSpan = watchCols();
+  return d.tr;
+}
+function toggleHistory(sym) {
+  if (openRows.has(sym)) openRows.delete(sym); else openRows.add(sym);
+  renderWatch();
+}
+
 function renderWatch() {
   const body = $("watchBody");
   const byKey = new Map(rows.map(r => [r.symbol, r]));
   const list = sorted(tickers.map(s => byKey.get(s) || { symbol: s, pending: true }), sortKey, sortDir);
   const keep = new Set(tickers);
   for (const [s, tr] of rowEls) if (!keep.has(s)) { tr.remove(); rowEls.delete(s); }
+  for (const [s, d] of detailRows) {
+    if (!keep.has(s) || !openRows.has(s)) { d.ctl.destroy(); d.tr.remove(); detailRows.delete(s); openRows.delete(s); }
+  }
+  let pos = 0;
+  const place = (node) => { if (body.children[pos] !== node) body.insertBefore(node, body.children[pos] || null); pos++; };
 
-  list.forEach((r, i) => {
+  list.forEach((r) => {
     let tr = rowEls.get(r.symbol);
     if (!tr) { tr = document.createElement("tr"); rowEls.set(r.symbol, tr); }
     tr.textContent = "";
     const td = () => tr.appendChild(document.createElement("td"));
-    tickerCell(td(), r.symbol, r.name);
+    const symTd = td(); symTd.className = "sym";
+    const btn = document.createElement("button");
+    btn.type = "button"; btn.className = "expand";
+    btn.setAttribute("aria-expanded", String(openRows.has(r.symbol)));
+    btn.setAttribute("aria-label", `${r.symbol}: show borrow fee history`);
+    btn.title = "Borrow fee history";
+    const chev = document.createElement("span"); chev.className = "chev"; chev.textContent = "▶";
+    const nm = document.createElement("span");
+    tickerCell(nm, r.symbol, r.name);
+    nm.className = "";
+    btn.append(chev, nm);
+    btn.addEventListener("click", () => toggleHistory(r.symbol));
+    symTd.append(btn);
 
     const span = config.prices_enabled ? 6 : 4;
     if (r.pending || !r.listed) {
@@ -548,12 +606,13 @@ function renderWatch() {
       chip(td(), r.availability);
     }
     const x = td();
-    const btn = document.createElement("button");
-    btn.className = "remove"; btn.type = "button"; btn.textContent = "×";
-    btn.setAttribute("aria-label", `Remove ${r.symbol}`);
-    btn.addEventListener("click", () => removeTicker(r.symbol));
-    x.appendChild(btn);
-    if (body.children[i] !== tr) body.insertBefore(tr, body.children[i] || null);
+    const rm = document.createElement("button");
+    rm.className = "remove"; rm.type = "button"; rm.textContent = "×";
+    rm.setAttribute("aria-label", `Remove ${r.symbol}`);
+    rm.addEventListener("click", () => removeTicker(r.symbol));
+    x.appendChild(rm);
+    place(tr);
+    if (openRows.has(r.symbol)) place(historyRow(r.symbol));
   });
 
   $("empty").hidden = tickers.length > 0;

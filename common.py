@@ -5,9 +5,14 @@ Shared helpers
   prices and metrics, and the ETF screen), so a busy page can't get the server
   blocked. After Yahoo answers "too many requests", all calls pause for a while.
 - LRU: a dict with a size cap, so caches can't grow without limit.
+- IBKR's stock loan file: download and parse usa.txt. Used by the website (app.py)
+  and by the hourly borrow-history recorder (tools/record_borrow.py).
 """
 
+import ftplib
+import io
 import os
+import re
 import threading
 import time
 from collections import OrderedDict, deque
@@ -115,3 +120,69 @@ class LRU:
 
     def clear(self):
         self.data.clear()
+
+
+# --------------------------- IBKR stock loan file ---------------------------
+FTP_HOST, FTP_USER, FTP_FILE = "ftp2.interactivebrokers.com", "shortstock", "usa.txt"
+
+
+def normalize(text):
+    """A ticker in IBKR's style (BRK.B), or None if it doesn't look like one."""
+    s = str(text).strip().upper().replace(" ", ".").lstrip("$")
+    return s if re.fullmatch(r"[A-Z0-9][A-Z0-9.\-]{0,9}", s) else None
+
+
+def to_float(x):
+    try:
+        return float(x)
+    except (TypeError, ValueError):
+        return None
+
+
+def borrow_rank(entry):
+    """When IBKR lists a stock twice, keep the row with a fee, then the one with more shares."""
+    shares = entry.get("shares")
+    return (entry.get("fee") is not None, shares if shares is not None else -1)
+
+
+def parse_borrow_text(text):
+    table, header, as_of = {}, None, ""
+    for line in text.splitlines():
+        if line.startswith("#BOF"):
+            as_of = " ".join(p.strip() for p in line.split("|")[1:3])
+        elif line.startswith("#SYM"):
+            header = [h.strip().lstrip("#").upper() for h in line.split("|")]
+        elif line.startswith("#") or not line.strip() or header is None:
+            continue
+        else:
+            row = dict(zip(header, (p.strip() for p in line.split("|"))))
+            sym = normalize(row.get("SYM", ""))
+            if not sym:
+                continue
+            raw = row.get("AVAILABLE", "")
+            digits = raw.replace(">", "").replace(",", "").strip()
+            entry = {
+                "name": row.get("NAME", "").title(),
+                "fee": to_float(row.get("FEERATE")),
+                "rebate": to_float(row.get("REBATERATE")),
+                "shares": int(digits) if digits.isdigit() else None,
+                "plus": raw.startswith(">"),
+                "isin": row.get("ISIN", "").upper() or None,
+            }
+            old = table.get(sym)
+            if old is None or borrow_rank(entry) > borrow_rank(old):
+                table[sym] = entry
+    return table, as_of
+
+
+def ftp_download(ftp, name):
+    buf = io.BytesIO()
+    ftp.retrbinary(f"RETR {name}", buf.write)
+    return buf.getvalue().decode("utf-8", errors="replace")
+
+
+def download_usa(timeout=30):
+    """IBKR's US stock loan file as text."""
+    with ftplib.FTP(FTP_HOST, timeout=timeout) as ftp:
+        ftp.login(FTP_USER, "")
+        return ftp_download(ftp, FTP_FILE)

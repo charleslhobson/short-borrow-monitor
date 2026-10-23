@@ -8,6 +8,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/uPlot.min.css?v=1.6.30">
+<link rel="stylesheet" href="/static/charts.css?v=1">
 <style>
   :root {
     --bg: #E8EDF2;
@@ -344,10 +346,14 @@
       <li><strong>Bonds and anything unmatched</strong> are charged the "fee for unmatched holdings" above. Rate, currency, credit and commodity derivatives count as 0%.</li>
     </ul>
     <p>Click an ETF to see every position, its fee and how it was matched, or download them as a CSV.</p>
-    <p><strong>Sources.</strong> Quoted fees, rebates and availability: Interactive Brokers' public stock loan files, refreshed about every 15 minutes. Prices, history and the T-bill yield: Yahoo Finance (FRED as a fallback for the yield). Holdings: the ETF's latest SEC N-PORT filing (complete, but filed quarterly and published up to 60 days later), or Yahoo's top 10 holdings when no filing is found. For information only, not investment advice.</p>
+    <p><strong>Charts.</strong> Each ETF's details show <strong>price vs total return</strong> over the same dates as the table: the market price (adjusted for splits only) and the value of one share bought at the start with every distribution reinvested (Yahoo's adjusted close, the series behind the returns above), both starting at the same price. The gap between them is what the distributions added, and it's why a fund's price can fall while its total return rises: each payout, including return of capital, lowers the price by about the amount paid, and a short owes every one. The <strong>borrow fee history</strong> chart shows IBKR's fee and shares available over time: this site's own hourly readings of IBKR's file, and older history from iBorrowDesk.</p>
+    <p><strong>Sources.</strong> Quoted fees, rebates and availability: Interactive Brokers' public stock loan files, refreshed about every 15 minutes. Prices, history and the T-bill yield: Yahoo Finance (FRED as a fallback for the yield). Older borrow fee history: iBorrowDesk. Holdings: the ETF's latest SEC N-PORT filing (complete, but filed quarterly and published up to 60 days later), or Yahoo's top 10 holdings when no filing is found. For information only, not investment advice.</p>
   </section>
 </div>
 
+<script src="/static/uPlot.iife.min.js?v=1.6.30"></script>
+<script src="/static/borrow-chart.js?v=1"></script>
+<script src="/static/tr-chart.js?v=1"></script>
 <script>
 const $ = (id) => document.getElementById(id);
 const LIST_KEY = "sbm.etfs.v1", GC_KEY = "sbm.etf.gc.v1", WIN_KEY = "sbm.etf.win.v1", SPREAD_KEY = "sbm.etf.spread.v1";
@@ -362,6 +368,7 @@ let sortKey = null, sortDir = 1;
 const open = new Set();
 const showAll = new Set();
 const full = new Map();         // symbol -> {key, state, data, error, promise}: every holding, loaded on demand
+const charts = new Map();       // "SYM|tr" / "SYM|borrow" -> {el, ctl, sym}: kept while the panel is open
 let timer = null, inflight = null;
 
 // ---------- formatting ----------
@@ -573,6 +580,29 @@ function render() {
 
     if (open.has(v.symbol)) body.append(detailRow(v));
   }
+  dropCharts();
+}
+
+// ---------- charts (static/tr-chart.js, static/borrow-chart.js) ----------
+const chartParams = () => win === "custom" ? { win: "custom", start: customStart } : { win };
+function chartHost(sym, kind) {
+  const key = `${sym}|${kind}`;
+  let c = charts.get(key);
+  if (!c) {
+    const host = el("div");
+    let ctl;
+    if (kind === "tr" && window.TrChart) ctl = TrChart.mount(host, sym, chartParams());
+    else if (kind === "borrow" && window.BorrowChart) ctl = BorrowChart.mount(host, sym);
+    else { host.className = "note-line"; host.textContent = "The chart couldn't load. Reload the page to try again."; ctl = { update() {}, destroy() {} }; }
+    c = { el: host, ctl, sym };
+    charts.set(key, c);
+  } else if (kind === "tr") c.ctl.update(chartParams());
+  return c.el;
+}
+function dropCharts() {
+  for (const [key, c] of charts) {
+    if (!open.has(c.sym) || !etfs.includes(c.sym)) { c.ctl.destroy(); charts.delete(key); }
+  }
 }
 function betaLine(bi) {
   if (!isNum(bi.beta)) return dash;
@@ -681,6 +711,15 @@ function detailRow(v) {
   if (r.expense != null) o.append(el("p", "note-line", `Expense ratio ${pctp(r.expense)} (already reflected in its total return).`));
   if (r.quote && isNum(r.quote.rebate)) o.append(el("p", "note-line", `IBKR rebate on short proceeds: ${pctp(r.quote.rebate)} / yr.`));
   grid.append(o);
+
+  const pr = el("div", "detail-wide");
+  pr.append(el("h3", null, "Price vs total return"));
+  pr.append(chartHost(v.symbol, "tr"));
+  grid.append(pr);
+  const bh = el("div", "detail-wide");
+  bh.append(el("h3", null, "Borrow fee history"));
+  bh.append(chartHost(v.symbol, "borrow"));
+  grid.append(bh);
 
   grid.append(holdingsSection(v));
   td.append(grid);

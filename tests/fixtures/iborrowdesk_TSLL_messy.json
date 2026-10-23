@@ -1,0 +1,52 @@
+{
+ "symbol": "TSLL",
+ "name": "DIREXION DAILY TSLA BULL 2X",
+ "updated": "whenever",
+ "daily": [
+  {
+   "date": "Tue, 01 Sep 2026 00:00:00 GMT",
+   "fee": "12.5",
+   "rebate": "-8.4",
+   "available": ">1,000,000"
+  },
+  {
+   "date": "Wed, 02 Sep 2026 00:00:00 GMT",
+   "fee": 13.1,
+   "available": 900000
+  },
+  {
+   "date": "Thu, 03 Sep 2026 00:00:00 GMT",
+   "fee": null,
+   "rebate": null,
+   "available": null
+  },
+  {
+   "date": "not a date",
+   "fee": 1,
+   "available": 1
+  },
+  {
+   "fee": 2.0,
+   "available": 5
+  },
+  "garbage",
+  {
+   "Date": "2026-09-04",
+   "Fee": 14.0,
+   "Rebate": -9.9,
+   "Available": 800000,
+   "extra": [
+    1,
+    2
+   ]
+  }
+ ],
+ "real_time": [
+  {
+   "time": "2026-09-04T15:30:00",
+   "fee": 14.2,
+   "rebate": -10.1,
+   "available": 750000
+  }
+ ]
+}

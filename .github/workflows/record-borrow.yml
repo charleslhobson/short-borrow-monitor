@@ -1,0 +1,31 @@
+# Saves IBKR's borrow fees to the history database every hour (see README,
+# "Borrow fee history"). Needs the DATABASE_URL repository secret; without it each
+# run just notes that it skipped.
+name: Record borrow
+
+on:
+  schedule:
+    - cron: "17 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: record-borrow
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  record:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: python tools/record_borrow.py
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}

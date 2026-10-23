@@ -627,8 +627,8 @@ SEC = Sec()
 
 
 # ------------------------------ fetchers ----------------------------------
-def _closes(hist):
-    close = hist["Close"].dropna() if "Close" in hist else None
+def _closes(hist, column="Close"):
+    close = hist[column].dropna() if column in hist else None
     if close is None or not len(close):
         return None
     idx = close.index
@@ -640,12 +640,19 @@ def _closes(hist):
 
 
 def fetch_history(yf, sym):
+    """Daily history from Yahoo:
+      close      split- and distribution-adjusted close ("Adj Close"): total return, used
+                 for every return, beta and break-even on the screen;
+      price      split-adjusted market price ("Close"), not adjusted for distributions;
+      dividends  the distributions paid (per share, split-adjusted), by ex-date."""
     t = yf.Ticker(yahoo_symbol(sym))
-    hist = yahoo_call(lambda: t.history(period="max", interval="1d", auto_adjust=True))
-    close = _closes(hist)
+    hist = yahoo_call(lambda: t.history(period="max", interval="1d", auto_adjust=False, actions=True))
+    close = _closes(hist, "Adj Close") if "Adj Close" in hist else _closes(hist)
     if close is None or len(close) < 20:
         return {"_error": "Yahoo has no price history for this ticker"}
-    out = {"close": close}
+    out = {"close": close, "price": _closes(hist, "Close")}
+    divs = _closes(hist, "Dividends")
+    out["dividends"] = divs[divs > 0] if divs is not None else None
     if sym != BENCHMARK:
         try:
             info = yahoo_call(lambda: t.info) or {}
@@ -659,6 +666,8 @@ def fetch_history(yf, sym):
             er = to_float(info.get("annualReportExpenseRatio"))
             er = er * 100 if er is not None and er < 1 else er
         out["expense"] = er
+        out["yield"] = next((v for v in (to_float(info.get(k)) for k in
+                                         ("yield", "trailingAnnualDividendYield", "dividendYield")) if v), None)
     return out
 
 
@@ -1164,19 +1173,12 @@ def beta_adjusted(r_x, r_spy, rfr, beta, fee=None):
     return out
 
 
-def analyze_window(close, spy, years=None, start=None, rfr=None, beta1y=None, fee=None, weekly=False):
-    """Returns, break-even fees and the beta-adjusted hedge comparison over one window.
+def window_slice(close, spy, years=None, start=None):
+    """The dates a window covers, used by both the table and the chart.
 
-    Preset windows (years) return None when the ETF is younger than the window. A
-    custom start date starts at inception if it's earlier than that, and returns
-    {"error": ...} when fewer than MIN_WINDOW_DAYS trading days are left.
-
-    Beta comes from the window's own returns (window_beta), with the 1-year beta as
-    the fallback; `rfr` gives the cash rate earned on short proceeds over the dates.
-
-    The previous, path-based break-evens are kept: short P&L (fraction of starting
-    notional) = -R_etf - fee * A, where A = sum over days of (short's market value /
-    starting notional) * days / 360, because borrow accrues daily on the current value.
+    Returns {"etf", "spy", "requested", "clamped"} (both series cut to the window's
+    trading days), None when a preset window is longer than the ETF's history, or
+    {"error", "requested_start"} for a custom start that leaves too few days.
     """
     import pandas as pd
 
@@ -1203,6 +1205,27 @@ def analyze_window(close, spy, years=None, start=None, rfr=None, beta1y=None, fe
                              f"(at least {MIN_WINDOW_DAYS} are needed).",
                     "requested_start": f"{requested:%Y-%m-%d}"}
         return None
+    return {"etf": c, "spy": s, "requested": requested, "clamped": clamped}
+
+
+def analyze_window(close, spy, years=None, start=None, rfr=None, beta1y=None, fee=None, weekly=False):
+    """Returns, break-even fees and the beta-adjusted hedge comparison over one window.
+
+    Preset windows (years) return None when the ETF is younger than the window. A
+    custom start date starts at inception if it's earlier than that, and returns
+    {"error": ...} when fewer than MIN_WINDOW_DAYS trading days are left.
+
+    Beta comes from the window's own returns (window_beta), with the 1-year beta as
+    the fallback; `rfr` gives the cash rate earned on short proceeds over the dates.
+
+    The previous, path-based break-evens are kept: short P&L (fraction of starting
+    notional) = -R_etf - fee * A, where A = sum over days of (short's market value /
+    starting notional) * days / 360, because borrow accrues daily on the current value.
+    """
+    win = window_slice(close, spy, years, start)
+    if win is None or "error" in win:
+        return win
+    c, s, requested, clamped = win["etf"], win["spy"], win["requested"], win["clamped"]
 
     rel = c / c.iloc[0]
     gaps = c.index.to_series().diff().dt.days.iloc[1:].to_numpy()
@@ -1243,6 +1266,85 @@ def analyze_window(close, spy, years=None, start=None, rfr=None, beta1y=None, fe
         if out["etf_ann"] is not None and out["spy_ann"] is not None:
             out.update(beta_adjusted(out["etf_ann"] * 100, out["spy_ann"] * 100, rf["ann"] * 100, used, fee))
     return out
+
+
+# ------------------------------ price chart ---------------------------------
+CHART_MAX_POINTS = 1000
+CHART_WINDOWS = {"inception": None, "3y": 3, "1y": 1}
+
+
+def chart_points(index, max_points=CHART_MAX_POINTS):
+    """Positions to plot: every day if they fit, else the last day of each week (then
+    every n-th week), always keeping the first and last day."""
+    import pandas as pd
+
+    n = len(index)
+    if n <= max_points:
+        return list(range(n))
+    weeks = pd.Series(range(n), index=index).groupby(index.to_period("W-FRI")).last().tolist()
+    if len(weeks) > max_points - 1:
+        step = math.ceil(len(weeks) / (max_points - 1))
+        weeks = weeks[::step]
+    return sorted({0, n - 1, *weeks})
+
+
+def chart_data(hist, spy, years=None, start=None):
+    """The ETF's market price and its total return (distributions reinvested) over the
+    same dates as the table's window. Total return and SPY's are scaled to start at the
+    first price: the value of one share bought then with every distribution reinvested."""
+    close = hist["close"]
+    price = hist.get("price")
+    win = window_slice(close, spy["close"], years, start)
+    if win is None:
+        return {"error": f"Not enough history for this window (since {close.index[0]:%Y-%m-%d}).",
+                "inception": f"{close.index[0]:%Y-%m-%d}"}
+    if "error" in win:
+        return win
+    c, s = win["etf"], win["spy"]
+    p = (price if price is not None else close).reindex(c.index).ffill().bfill()
+    p0 = float(p.iloc[0])
+    tr = c / c.iloc[0] * p0
+    spy_tr = s / s.iloc[0] * p0
+    divs = hist.get("dividends")
+    if divs is not None and len(divs):
+        divs = divs[(divs.index > c.index[0]) & (divs.index <= c.index[-1])]
+    days = (c.index[-1] - c.index[0]).days
+    yrs = days / 365.25
+
+    def ann(r):
+        return (1 + r) ** (1 / yrs) - 1 if r > -1 and yrs > 0 else None
+
+    price_ret = float(p.iloc[-1] / p0 - 1)
+    total_ret = float(c.iloc[-1] / c.iloc[0] - 1)
+    notes = []
+    if price is None:
+        notes.append("Yahoo gave no unadjusted price, so both lines show total return.")
+    ever = hist.get("dividends")
+    if (ever is None or not len(ever)) and (hist.get("yield") or 0) > 0:
+        notes.append("Yahoo shows no distributions for this fund, but it reports a yield, so the "
+                     "total-return line may be missing payouts.")
+    keep = chart_points(c.index)
+    r4 = lambda v: round(float(v), 4)                       # noqa: E731
+    return {
+        "start": f"{c.index[0]:%Y-%m-%d}", "end": f"{c.index[-1]:%Y-%m-%d}",
+        "requested_start": f"{win['requested']:%Y-%m-%d}" if win["requested"] is not None else None,
+        "clamped": win["clamped"], "years": yrs, "weekly": len(keep) < len(c),
+        "dates": [f"{c.index[i]:%Y-%m-%d}" for i in keep],
+        "price": [r4(p.iloc[i]) for i in keep],
+        "tr": [r4(tr.iloc[i]) for i in keep],
+        "spy_tr": [r4(spy_tr.iloc[i]) for i in keep],
+        "distributions": [{"date": f"{d:%Y-%m-%d}", "amount": round(float(v), 6)}
+                          for d, v in (divs.items() if divs is not None else [])],
+        "summary": {
+            "price_return": price_ret, "total_return": total_ret,
+            "price_ann": ann(price_ret), "total_ann": ann(total_ret),
+            "spy_total": float(s.iloc[-1] / s.iloc[0] - 1),
+            "distributions_per_share": float(divs.sum()) if divs is not None and len(divs) else 0.0,
+            "distributions_count": int(len(divs)) if divs is not None else 0,
+            "added_pts": (total_ret - price_ret) * 100,
+        },
+        "notes": notes,
+    }
 
 
 # ------------------------------- service ----------------------------------
@@ -1380,6 +1482,21 @@ class EtfService:
             wait(proxies, timeout=WAIT_SEC)
             block = self._holdings_block(sym, hold, hist, idx, gc, cash, [], full=True)
         return dict(block, symbol=sym, gc=gc, cash=cash)
+
+    def chart(self, sym, years=None, start=None):
+        """Price vs total return for one ETF (the details panel's chart), from cached history."""
+        waiting = [f for f in (self._ensure("hist", BENCHMARK), self._ensure("hist", sym)) if f]
+        if waiting:
+            wait(waiting, timeout=WAIT_SEC)
+        spy, _ = self._lookup("hist", BENCHMARK)
+        hist, _ = self._lookup("hist", sym)
+        if hist is None or spy is None:
+            return {"symbol": sym, "pending": True}
+        if "_error" in hist:
+            return {"symbol": sym, "error": hist["_error"], "unknown": True}
+        if "_error" in spy:
+            return {"symbol": sym, "error": "Couldn't load SPY history from Yahoo"}
+        return dict(chart_data(hist, spy, years, start), symbol=sym)
 
     def report(self, symbols, gc, cash=CASH_DEFAULT, start=None, spread=RFR_SPREAD_DEFAULT):
         t0 = time.time()
