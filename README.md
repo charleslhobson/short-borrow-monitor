@@ -179,7 +179,7 @@ of" date in each ETF's details can be a few months old.
 - `CASH_RATE`: the starting "fee for cash & T-bills" (default `0`).
 - `RFR_SPREAD`: the starting spread below the T-bill rate for interest on short
   proceeds (default `1.0`, % per year).
-- `DATABASE_URL`, `STORAGE_LIMIT_MB`, `SHARES_CHANGE_PCT`: see
+- `DATABASE_URL`, `STORAGE_LIMIT_MB`, `SHARES_CHANGE_PCT`, `IBORROWDESK`: see
   [Borrow fee history](#borrow-fee-history).
 
 ### Checking the holdings match
@@ -213,6 +213,10 @@ to see its borrow fee and shares available over time:
     IBKR's file for years. It's fetched once per ticker, the first time anyone opens
     that ticker's chart (that first chart takes a few seconds), and saved. A dotted
     line marks where iBorrowDesk's history ends and this site's readings begin.
+    **As of October 2026 iBorrowDesk turns away requests from cloud servers** (Render's
+    and GitHub's both get "403 Forbidden" or a dropped connection), so charts start on
+    the day this site began recording and the chart says so. The site asks iBorrowDesk
+    again once a day; if it ever allows the request, older history fills in by itself.
   - **Shaded "not recorded"** stretches are 3+ hours when this site's recorder didn't
     run. iBorrowDesk's data fills them where it can.
 - Only changes are saved: a new reading is stored when the fee changes, the rebate
@@ -265,10 +269,12 @@ while people use it. Two recorders can't save the same reading twice.
   **Record borrow** and re-enable it. GitHub can also start scheduled runs late when
   it's busy.
 - **iBorrowDesk is unofficial.** It's a free site that publishes IBKR's data, with no
-  documented API, so it may change or stop answering. This site asks it for at most
-  one ticker every 2 seconds, only when someone opens a chart, and remembers failures
-  for an hour. `python tools/check_iborrowdesk.py GME AAPL` checks it live and compares
-  its fees with IBKR's file.
+  documented API, and it currently blocks cloud servers (see above). This site asks it
+  for at most one ticker every 2 seconds, only when someone opens a chart. When it
+  refuses the server, the site stops asking for 24 hours; a failure for one ticker is
+  retried after an hour. Set `IBORROWDESK` to `off` to stop asking altogether.
+  `python tools/check_iborrowdesk.py GME AAPL` checks it from your own computer and
+  compares its fees with IBKR's file.
 - `/api/borrow/history?symbol=GME&range=1y` returns a chart's data as JSON.
 
 ## Good to know
