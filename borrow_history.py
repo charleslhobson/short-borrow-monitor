@@ -151,9 +151,19 @@ class MemoryStore:
         self.pts = {}               # (symbol, ts, source) -> (fee, rebate, shares)
         self.fills = {}             # symbol -> {"fetched_at", "status", "first_date"}
         self.run_rows = {}          # ts -> (ok, rows, note)
+        self.symbols = {}           # ibkr -> (yahoo, how, checked_at): Yahoo ticker spellings
 
     def setup(self):
         pass
+
+    def symbols_get(self, ibkrs):
+        with self.lock:
+            return {s: self.symbols[s] for s in ibkrs if s in self.symbols}
+
+    def symbols_put(self, rows):
+        with self.lock:
+            for ibkr, yahoo, how, checked in rows:
+                self.symbols[ibkr] = (yahoo, how, checked)
 
     def latest(self):
         with self.lock:
@@ -239,6 +249,9 @@ SCHEMA = [
          symbol text PRIMARY KEY, fetched_at timestamptz, status text, first_date date)""",
     """CREATE TABLE IF NOT EXISTS recorder_runs (
          ts timestamptz PRIMARY KEY, ok boolean, rows int, note text)""",
+    # Yahoo's spelling of IBKR tickers (common.SymbolMap); yahoo is NULL when Yahoo doesn't carry it
+    """CREATE TABLE IF NOT EXISTS yahoo_symbols (
+         ibkr text PRIMARY KEY, yahoo text, how text, checked_at timestamptz)""",
 ]
 
 
@@ -285,6 +298,19 @@ class PgStore:
 
     def setup(self):
         self._do(lambda cur: None)
+
+    def symbols_get(self, ibkrs):
+        def q(cur):
+            cur.execute("SELECT ibkr, yahoo, how, checked_at FROM yahoo_symbols WHERE ibkr = ANY(%s)", (list(ibkrs),))
+            return {r[0]: (r[1], r[2], r[3]) for r in cur.fetchall()}
+        return self._do(q) if ibkrs else {}
+
+    def symbols_put(self, rows):
+        if rows:
+            self._do(lambda cur: cur.executemany(
+                """INSERT INTO yahoo_symbols (ibkr, yahoo, how, checked_at) VALUES (%s, %s, %s, %s)
+                   ON CONFLICT (ibkr) DO UPDATE SET yahoo = EXCLUDED.yahoo, how = EXCLUDED.how,
+                   checked_at = EXCLUDED.checked_at""", rows))
 
     def latest(self):
         def q(cur):

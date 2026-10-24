@@ -45,13 +45,19 @@ def before_count(row, info):
 
 
 def main(symbols, verbose, fake=False):
+    import common
+    import finra
+    fin = None
     if fake:                                  # dry run on the test data in tests/fake_yf.py
         sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tests"))
         import fake_yf as yf
+        common.SYMBOLS = common.SymbolMap(quotes=yf.quotes, search=yf.search)
     else:
         import yfinance as yf
+        fin = finra.FinraShortInterest()
+        fin.ensure(background=False)          # FINRA's short interest file, for tickers Yahoo has none for
     import etf
-    svc = metrics.MetricService(yf, etf.SEC, bool(etf.SEC_USER_AGENT))
+    svc = metrics.MetricService(yf, etf.SEC, bool(etf.SEC_USER_AGENT), finra=fin)
     metrics.WAIT_SEC = 120
     print(f"{'Ticker':8} {'Before':>7} {'After':>7}  {'No value (reasons)':s}")
     for sym in symbols:
@@ -79,20 +85,23 @@ def main(symbols, verbose, fake=False):
             print(f"         .info keys Yahoo returned ({len(info)}): {', '.join(sorted(info))}")
 
         # where Yahoo has a value, does the fallback agree?
-        for source in ("statements", "analysts", "holders", "shares"):
+        for source in ("stmt_qi", "stmt_qb", "stmt_qc", "stmt_ai", "analysts", "holders", "shares"):
             svc._ensure(source, sym)
         svc._ensure("hist", "SPY")
         deadline = time.time() + 60
-        while time.time() < deadline and any(svc._lookup(s, sym)[0] is None for s in ("statements", "analysts", "holders", "shares")):
+        while time.time() < deadline and any(svc._lookup(s, sym)[0] is None for s in ("stmt_qi", "stmt_qb", "analysts", "holders", "shares")):
             time.sleep(0.5)
         for key, tol in COMPARE.items():
             yahoo = info.get(key)
             if not isinstance(yahoo, (int, float)) or not yahoo:
                 continue
-            ctx_sources = svc._sources(sym)
             stripped = {k: v for k, v in info.items() if k not in metrics_info_names(key)}
-            ctx_sources["info"] = {"info": stripped, "empty": False}
-            ctx = metrics.Ctx(sym, ctx_sources, spy=svc._lookup("hist", "SPY")[0], sec_enabled=svc.sec_enabled)
+
+            def lookup(source, s, stripped=stripped):     # Yahoo's own value hidden, so the fallback runs
+                if source == "info" and s == sym:
+                    return {"info": stripped, "empty": False}
+                return svc._peek(source, s)
+            ctx = metrics.Ctx(sym, lookup, sec_enabled=svc.sec_enabled)
             ours = ctx.v(key)
             if ours is None:
                 continue

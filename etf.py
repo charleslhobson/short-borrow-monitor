@@ -28,7 +28,7 @@ import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor, wait
 from datetime import date
 
-from common import LRU, yahoo_call
+from common import LRU, listing_message, resolve_symbol, yahoo_call, yahoo_symbol
 
 SEC_USER_AGENT = os.environ.get("SEC_USER_AGENT", "").strip()
 GC_DEFAULT = float(os.environ.get("GC_RATE", "0.25"))     # % / yr assumed for unmatched holdings
@@ -54,6 +54,10 @@ BETA_CHANGE_FLAG = 0.25       # flag when the window's beta and last year's diff
 WEEKLY_ABOVE = 0.5            # use weekly returns when more than this share of a fund's stocks trade abroad
 MIN_HEDGE_BETA = 0.1          # below this, shorting isn't treated as a SPY hedge
 SLEEVE_MIN_HOLDINGS = 5       # stock holdings a fund needs before they stand in for its index
+LOOK_THROUGH_TOP = 15         # biggest positions used for the Stocks page's look-through averages
+# Also stock exposure for look-through, though not tied to one ticker: Yahoo's "everything outside
+# the top 10", and stock swaps, futures and options whose underlying couldn't be looked through.
+LOOK_THROUGH_EXTRA = ("Undisclosed", "Swap", "Future", "Option", "Derivative")
 
 # Index swaps and futures whose components aren't listed are priced from an ETF
 # that holds the index. Edit freely: (pattern matched against the index name, ETF).
@@ -91,10 +95,6 @@ def num(text):
     if text is None:
         return None
     return to_float(str(text).replace(",", "").strip())
-
-
-def yahoo_symbol(sym):
-    return sym.replace(".", "-")
 
 
 def parse_start_date(text, today=None):
@@ -583,7 +583,7 @@ class Sec:
             for row in d["data"]:
                 funds.setdefault(str(row[i_sym]).upper(), (int(row[i_cik]), row[i_ser]))
             self.funds, self.funds_at = funds, time.time()
-        return self.funds.get(sym.upper()) or self.funds.get(yahoo_symbol(sym).upper())
+        return self.funds.get(sym.upper()) or self.funds.get((yahoo_symbol(sym) or sym).upper())
 
     def latest_nport_folder(self, cik, series):
         hit = self.folders.get(series)
@@ -645,7 +645,10 @@ def fetch_history(yf, sym):
                  for every return, beta and break-even on the screen;
       price      split-adjusted market price ("Close"), not adjusted for distributions;
       dividends  the distributions paid (per share, split-adjusted), by ex-date."""
-    t = yf.Ticker(yahoo_symbol(sym))
+    res = resolve_symbol(sym)
+    if res.yahoo is None:
+        return {"_error": listing_message(res) or "Yahoo has no price history for this ticker"}
+    t = yf.Ticker(res.yahoo)
     hist = yahoo_call(lambda: t.history(period="max", interval="1d", auto_adjust=False, actions=True))
     close = _closes(hist, "Adj Close") if "Adj Close" in hist else _closes(hist)
     if close is None or len(close) < 20:
@@ -731,7 +734,10 @@ def fetch_holdings(yf, sym):
     else:
         notes.append("SEC lookup is off (SEC_USER_AGENT not set), so only Yahoo's top 10 are used")
 
-    t = yf.Ticker(yahoo_symbol(sym))
+    ysym = yahoo_symbol(sym)
+    if ysym is None:
+        return {"_error": "; ".join(notes + ["Yahoo doesn't carry this ticker"])}
+    t = yf.Ticker(ysym)
     try:
         top = yahoo_call(lambda: t.funds_data.top_holdings)
     except Exception:
@@ -853,7 +859,7 @@ def _row(h, exposure, fee, how, group, detail="", matched=0.0, assumed=False, sy
         "type": holding_type(h), "cat": h.get("cat") or "", "issuer_cat": h.get("issuer_cat") or "",
         "exposure": exposure, "fee": fee, "assumed": assumed, "how": how, "group": group,
         "matched": matched, "contrib": max(exposure, 0.0) * fee if fee is not None else 0.0,
-        "detail": detail, "non_us": non_us,
+        "detail": detail, "non_us": non_us, "symbol": symbol,
     }
 
 
@@ -907,7 +913,9 @@ def _sleeve(rows):
 
 
 def _underlying(ref, idx, gc, sleeve, proxy):
-    """(fee, matched share, label, detail, pending, non-US share) for what a long derivative tracks."""
+    """(fee, matched share, label, detail, pending, non-US share, look) for what a long
+    derivative tracks; look says how it was looked through ({"symbol": IBKR ticker,
+    "via": "stock" | "components" | "sleeve" | "proxy"}), for the Stocks page's look-through."""
     ref = ref or {}
     rname = _display(ref.get("name") or ref.get("title")) or "the reference asset"
     looks_like_index = bool(INDEX_WORDS.search(f"{ref.get('name') or ''} {ref.get('title') or ''}"))
@@ -916,9 +924,10 @@ def _underlying(ref, idx, gc, sleeve, proxy):
                                      names=(ref.get("name"), ref.get("title")))
         if entry is not None and entry.get("fee") is not None:
             return (entry["fee"], 1.0, f"Look-through: {entry['symbol']}",
-                    f"Tracks {rname}; fee via {match_label(entry, how)}", False, non_us_from_entry(entry))
+                    f"Tracks {rname}; fee via {match_label(entry, how)}", False, non_us_from_entry(entry),
+                    {"symbol": entry["symbol"], "via": "stock"})
         if not looks_like_index:
-            return gc, 0.0, "Assumed (unmatched)", f"Tracks {rname}, but {'; '.join(tried)}", False, None
+            return gc, 0.0, "Assumed (unmatched)", f"Tracks {rname}, but {'; '.join(tried)}", False, None, {}
     if ref.get("type") == "index" or looks_like_index:
         comps = ref.get("components") or []
         if comps:
@@ -934,21 +943,22 @@ def _underlying(ref, idx, gc, sleeve, proxy):
                     where.append((w, non_us_from_entry(entry)))
             return (acc / total, matched / total, f"Look-through: {rname}",
                     f"{len(comps)} components listed in the filing; {matched / total:.0%} of them matched", False,
-                    weighted_non_us(where))
+                    weighted_non_us(where), {"via": "components"})
         if sleeve:
             return (sleeve["rate"], sleeve["matched"], f"Look-through: {rname}",
                     f"Priced from the fund's own {sleeve['count']} stock holdings, as a stand-in for the index", False,
-                    sleeve.get("non_us"))
+                    sleeve.get("non_us"), {"via": "sleeve"})
         p = proxy(ref.get("name") or "") if proxy else None
         if p and p[0] == "ok":
             return (p[2], p[3], f"Look-through: {rname}",
-                    f"Priced from {p[1]}'s holdings, which track this index", False, p[4] if len(p) > 4 else None)
+                    f"Priced from {p[1]}'s holdings, which track this index", False, p[4] if len(p) > 4 else None,
+                    {"via": "proxy", "proxy": p[1]})
         if p and p[0] == "pending":
-            return gc, 0.0, "Assumed (unmatched)", f"Index {rname}: {p[1]}'s holdings are still loading", True, None
+            return gc, 0.0, "Assumed (unmatched)", f"Index {rname}: {p[1]}'s holdings are still loading", True, None, {}
         why = (f"couldn't load {p[1]}'s holdings ({p[2]})" if p else
                "no components listed and no proxy ETF set for it (see INDEX_PROXIES in etf.py)")
-        return gc, 0.0, "Assumed (unmatched)", f"Index {rname}: {why}", False, None
-    return gc, 0.0, "Assumed (unmatched)", "The filing doesn't say what this tracks", False, None
+        return gc, 0.0, "Assumed (unmatched)", f"Index {rname}: {why}", False, None, {}
+    return gc, 0.0, "Assumed (unmatched)", "The filing doesn't say what this tracks", False, None, {}
 
 
 def price_derivative(h, idx, gc, nav, fund_name, sleeve, proxy):
@@ -981,13 +991,15 @@ def price_derivative(h, idx, gc, nav, fund_name, sleeve, proxy):
         what = "delta-adjusted exposure can't be computed" if d["kind"] == "option" else "no notional amount"
         return _row(h, 0.0, None, "Excluded: no exposure reported", "excluded",
                     f"The filing gives {what}", name=name), False
-    fee, matched, how, detail, pending, non_us = _underlying(d.get("ref"), idx, gc, sleeve, proxy)
+    fee, matched, how, detail, pending, non_us, look = _underlying(d.get("ref"), idx, gc, sleeve, proxy)
     notes = [detail, f"exposure {exposure:.1%} of net assets from notional" if not approx else approx]
     if src != "as stated in the filing":
         notes.append(f"direction {src}")
     group = "lookthrough" if how.startswith("Look-through") else "unmatched"
-    return _row(h, exposure, fee, how, group, "; ".join(notes), matched=matched,
-                assumed=matched < 1.0, name=name, non_us=non_us), pending
+    row = _row(h, exposure, fee, how, group, "; ".join(notes), matched=matched,
+               assumed=matched < 1.0, name=name, non_us=non_us, symbol=look.get("symbol"))
+    row["via"], row["proxy"] = look.get("via"), look.get("proxy")
+    return row, pending
 
 
 def price_holdings(hold, idx, gc, cash_fee, fund_name=None, proxy=None):
@@ -1482,6 +1494,59 @@ class EtfService:
             wait(proxies, timeout=WAIT_SEC)
             block = self._holdings_block(sym, hold, hist, idx, gc, cash, [], full=True)
         return dict(block, symbol=sym, gc=gc, cash=cash)
+
+    def lookthrough_weights(self, sym, timeout=WAIT_SEC, depth=0):
+        """A fund's biggest US stock positions, for the Stocks page's look-through
+        averages: {"weights": [(IBKR ticker, share of net assets), ...], "equity": all
+        stock exposure (swaps on a stock or the fund's own index count too), "count":
+        holdings in the filing (None for Yahoo's top 10), "source", "as_of"}. None while
+        the holdings are still loading."""
+        fut = self._ensure("hold", sym)
+        if fut is not None:
+            wait([fut], timeout=timeout)
+        hold, _ = self._lookup("hold", sym)
+        if hold is None:
+            return None
+        if "_error" in hold:
+            return {"_error": hold["_error"]}
+        if hold.get("single_stock"):
+            return {"_error": "Not a fund"}
+        self.borrow.ensure_fresh()
+        idx = self.match_index(self.borrow.snapshot()[0])
+        waiting = []
+        rows = self._price(sym, hold, idx, GC_DEFAULT, CASH_DEFAULT, waiting)["rows"]
+        if waiting:
+            wait(waiting, timeout=timeout)
+            rows = self._price(sym, hold, idx, GC_DEFAULT, CASH_DEFAULT, [])["rows"]
+        by_sym, equity, sleeve, proxies = {}, 0.0, 0.0, {}
+        for r in rows:
+            if r["group"] not in EQUITY_GROUPS or r["exposure"] <= 0:
+                continue
+            if r["group"] != "lookthrough" and r["type"] not in EQUITY_TYPES + LOOK_THROUGH_EXTRA:
+                continue
+            equity += r["exposure"]
+            if r.get("via") == "sleeve":            # an index swap standing on the fund's own stocks
+                sleeve += r["exposure"]
+            elif r.get("via") == "proxy" and r.get("proxy") and depth == 0:
+                proxies[r["proxy"]] = proxies.get(r["proxy"], 0.0) + r["exposure"]
+            elif r.get("symbol") and not r.get("non_us"):
+                by_sym[r["symbol"]] = by_sym.get(r["symbol"], 0.0) + r["exposure"]
+        direct = sum(by_sym.values())
+        if sleeve and direct:
+            by_sym = {k: v * (direct + sleeve) / direct for k, v in by_sym.items()}
+        for proxy, exposure in proxies.items():     # an index swap priced from an ETF that holds the index
+            pw = self.lookthrough_weights(proxy, timeout, depth=1)
+            if pw is None:
+                return None
+            if "_error" in pw or not pw.get("equity"):
+                continue
+            for s, w in pw["weights"]:
+                by_sym[s] = by_sym.get(s, 0.0) + exposure * w / pw["equity"]
+        weights = sorted(by_sym.items(), key=lambda kv: -kv[1])[:LOOK_THROUGH_TOP]
+        count = (sum(1 for h in hold.get("holdings") or [] if not h.get("undisclosed"))
+                 if hold.get("complete") else None)
+        return {"weights": weights, "equity": equity, "count": count,
+                "source": hold.get("source"), "as_of": hold.get("as_of")}
 
     def chart(self, sym, years=None, start=None):
         """Price vs total return for one ETF (the details panel's chart), from cached history."""

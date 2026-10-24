@@ -12,7 +12,8 @@ Settings (environment variables):
     DEFAULT_TICKERS   starting list for new visitors, e.g. "AAPL,TSLA,GME,AMC"
     PORT              set automatically by most hosts (default 8000)
     DATABASE_URL      Postgres connection string (e.g. a free Neon database) for the
-                      borrow fee history charts; without it charts use iBorrowDesk only
+                      borrow fee history charts and Yahoo's ticker spellings; without it
+                      charts use iBorrowDesk only
     STORAGE_LIMIT_MB  the database's size limit, for the "nearly full" warning (default 500)
 """
 
@@ -28,8 +29,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
+import common
 from common import (FTP_FILE, FTP_HOST, FTP_USER, LRU, YAHOO, borrow_rank, download_usa,  # noqa: F401
-                    ftp_download, is_rate_limit, normalize, parse_borrow_text, to_float)
+                    ftp_download, ibkr_symbol, is_rate_limit, normalize, parse_borrow_text, to_float)
 
 APP_DIR = Path(__file__).resolve().parent
 PORT = int(os.environ.get("PORT", "8000"))
@@ -173,8 +175,32 @@ def live_quote(sym):
     return (entry, as_of) if entry else None
 
 
+def isin_of(sym):
+    """IBKR's ISIN for a ticker (US ones are masked in IBKR's file), for Yahoo lookups."""
+    entry = BORROW.snapshot()[0].get(sym)
+    return entry.get("isin") if entry else None
+
+
+def parse_symbols(query, key="symbols", limit=MAX_SYMBOLS):
+    """Tickers from the query string in IBKR's spelling (BRK-B -> BRK.B), plus
+    {ibkr: what was typed} for the ones that were respelled."""
+    table = BORROW.snapshot()[0]
+    raw = ",".join(query.get(key, [""]))
+    out, typed = [], {}
+    for x in raw.split(","):
+        s = ibkr_symbol(x, table or None)
+        if s and s not in out:
+            out.append(s)
+            t = normalize(x)
+            if t and t != s:
+                typed[s] = t
+    return out[:limit], typed
+
+
 import borrow_history as history_mod      # borrow fee history charts (borrow_history.py)
-HISTORY = history_mod.HistoryService(history_mod.make_store(), live=live_quote)
+STORE = history_mod.make_store()
+HISTORY = history_mod.HistoryService(STORE, live=live_quote)
+common.SYMBOLS.store = STORE              # remembers Yahoo's spelling of each ticker (yahoo_symbols table)
 STATIC_DIR = APP_DIR / "static"
 STATIC_TYPES = {".js": "application/javascript; charset=utf-8", ".css": "text/css; charset=utf-8"}
 
@@ -191,9 +217,11 @@ class Prices:
         self.cache = LRU(3000)
         self.pool = ThreadPoolExecutor(max_workers=8)
 
-    def _fetch(self, sym):
+    def _fetch(self, sym, ysym):
+        if ysym is None:                    # Yahoo doesn't carry this ticker
+            return {"price": None, "change": None}
         try:
-            info = yf.Ticker(sym.replace(".", "-")).fast_info   # Yahoo writes BRK.B as BRK-B
+            info = yf.Ticker(ysym).fast_info   # Yahoo's spelling: BRK.B is BRK-B (common.yahoo_symbol)
             price = to_float(info.last_price)
             prev = to_float(info.previous_close)
         except Exception as e:
@@ -216,8 +244,9 @@ class Prices:
                     out[s] = hit[1]
                 else:
                     todo.append(s)
-        todo = [s for s in todo if YAHOO.try_acquire()]      # shared Yahoo rate limit
-        for s, res in zip(todo, self.pool.map(self._fetch, todo)):
+        spell = common.SYMBOLS.resolve_many(todo, {s: isin_of(s) for s in todo}) if todo else {}
+        todo = [s for s in todo if spell[s].yahoo is None or YAHOO.try_acquire()]   # shared Yahoo rate limit
+        for s, res in zip(todo, self.pool.map(lambda x: self._fetch(x, spell[x].yahoo), todo)):
             if res is not None:
                 with self.lock:
                     self.cache[s] = (now, res)
@@ -233,9 +262,13 @@ PRICES = Prices()
 
 
 # --------------------------- Stocks page metrics ---------------------------
+import finra as finra_mod                 # FINRA's free short interest file (finra.py)
 import metrics as metrics_mod             # metric catalog, fallbacks and reasons (metrics.py)
 CATALOG = metrics_mod.CATALOG
-METRICS = (metrics_mod.MetricService(yf, etf_mod.SEC, bool(etf_mod.SEC_USER_AGENT))
+FINRA = finra_mod.FinraShortInterest()
+METRICS = (metrics_mod.MetricService(yf, etf_mod.SEC, bool(etf_mod.SEC_USER_AGENT),
+                                     ibkr=lambda s: BORROW.snapshot()[0].get(s),
+                                     holdings=ETF.lookthrough_weights if ETF else None, finra=FINRA)
            if PRICES_ON else None)
 
 
@@ -299,7 +332,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/etf/chart":
             if ETF is None:
                 return self._json({"error": "yfinance is not installed on the server."}, 503)
-            sym = normalize(query.get("symbol", [""])[0])
+            sym = ibkr_symbol(query.get("symbol", [""])[0], BORROW.snapshot()[0] or None)
             if not sym:
                 return self._json({"error": "Give one ETF ticker, e.g. ?symbol=TSLL"}, 400)
             win = query.get("win", [""])[0].lower()
@@ -333,15 +366,13 @@ class Handler(BaseHTTPRequestHandler):
             gc = rate_param(query, "gc", etf_mod.GC_DEFAULT)
             cash = rate_param(query, "cash", etf_mod.CASH_DEFAULT)
             if path == "/api/etf/holdings":
-                sym = normalize(query.get("symbol", [""])[0])
+                sym = ibkr_symbol(query.get("symbol", [""])[0], BORROW.snapshot()[0] or None)
                 if not sym:
                     return self._json({"error": "Give one ETF ticker, e.g. ?symbol=TSLL"})
                 return self._json(ETF.holdings_detail(sym, gc, cash))
-            raw = ",".join(query.get("symbols", [""]))
-            syms = list(dict.fromkeys(s for s in (normalize(x) for x in raw.split(",")) if s))
+            syms, _ = parse_symbols(query)
             start, start_error = etf_mod.parse_start_date(query.get("start", [""])[0])
             spread = rate_param(query, "spread", etf_mod.RFR_SPREAD_DEFAULT, hi=10)
-            syms = syms[:MAX_SYMBOLS]
             out = ETF.report(syms, gc, cash, start, spread)
             out["start_error"] = start_error
             add_prices(out, PRICES.get(syms) if PRICES_ON else {}, PRICES_ON)
@@ -355,7 +386,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(404, '{"error":"not found"}')
         if path == "/api/borrow/history":
             BORROW.ensure_fresh()
-            out = HISTORY.history(query.get("symbol", [""])[0], query.get("range", ["1y"])[0].lower())
+            sym = ibkr_symbol(query.get("symbol", [""])[0], BORROW.snapshot()[0] or None) or ""
+            out = HISTORY.history(sym, query.get("range", ["1y"])[0].lower())
             return self._json(out, 400 if "error" in out else 200)
         if path == "/healthz":
             return self._send(200, "ok", "text/plain")
@@ -372,16 +404,19 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/quotes":
             BORROW.ensure_fresh()
-            raw = ",".join(query.get("symbols", [""]))
-            syms = list(dict.fromkeys(s for s in (normalize(x) for x in raw.split(",")) if s))
-            syms = syms[:MAX_SYMBOLS]
+            syms, typed = parse_symbols(query)
             prices = PRICES.get(syms)
             table, _, as_of, error, refreshing = BORROW.snapshot()
+            spell = common.SYMBOLS.resolve_many(syms, {s: isin_of(s) for s in syms}) if PRICES_ON else {}
             rows = []
             for s in syms:
                 b, p = table.get(s), prices.get(s, {})
+                res = spell.get(s)
                 rows.append({
                     "symbol": s,
+                    "typed": typed.get(s),                 # what the visitor typed, when respelled (BRK-B)
+                    "yahoo": res.yahoo if res else None,   # Yahoo's ticker, shown on hover
+                    "yahoo_note": common.listing_message(res) if res else None,
                     "name": b["name"] if b else None,
                     "listed": b is not None,
                     "price": p.get("price"),
@@ -404,14 +439,21 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/metrics":
             if not PRICES_ON:
                 return self._json({"rows": [], "pending": 0})
-            raw = ",".join(query.get("symbols", [""]))
-            syms = list(dict.fromkeys(s for s in (normalize(x) for x in raw.split(",")) if s))
+            syms, typed = parse_symbols(query)
             keys = [k for k in ",".join(query.get("keys", [""])).split(",") if k]
             if not keys:                          # older pages: everything, performance only if asked
                 keys = [k for k in metrics_mod.YAHOO_KEYS
                         if k not in metrics_mod.PERF_KEYS or query.get("perf", ["0"])[0] == "1"]
-            rows, pending = METRICS.get(syms[:MAX_SYMBOLS], keys)
-            return self._json({"rows": rows, "pending": pending})
+            BORROW.ensure_fresh()
+            prefetch = query.get("prefetch", ["0"])[0] == "1"     # another tab, fetched ahead while idle
+            retry = [s for s in (ibkr_symbol(x) for x in ",".join(query.get("retry", [""])).split(",")) if s]
+            rows, pending = METRICS.get(syms, keys, prefetch=prefetch, retry=[s for s in retry if s in syms])
+            busy = METRICS.busy_for()
+            if prefetch:
+                return self._json({"pending": pending, "busy": busy})
+            for r in rows:
+                r["typed"] = typed.get(r["symbol"])
+            return self._json({"rows": rows, "pending": pending, "busy": busy})
 
         if path == "/api/top":
             BORROW.ensure_fresh()
@@ -428,6 +470,8 @@ def main():
     if not PRICES_ON:
         print("Prices are hidden (yfinance not installed, or SHOW_PRICES=off).", flush=True)
     threading.Thread(target=BORROW.ensure_fresh, daemon=True).start()
+    if PRICES_ON:
+        FINRA.ensure()                        # FINRA's short interest file loads in the background
     server.serve_forever()
 
 
