@@ -15,11 +15,13 @@ step line. Points live in Postgres (DATABASE_URL, e.g. a free Neon database).
 Without DATABASE_URL nothing is recorded and charts show iBorrowDesk's data live.
 """
 
+import http.client
 import json
 import math
 import os
 import threading
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import date, datetime, timedelta, timezone
@@ -54,6 +56,11 @@ MAX_POINTS = 1500              # most points one chart request returns
 IBD_MIN_INTERVAL = 2.0         # seconds between any two iBorrowDesk requests
 IBD_TIMEOUT = 15
 IBD_RETRY_FAILED = 3600        # a failed iBorrowDesk lookup is retried after an hour
+IBD_BLOCK_PAUSE = 24 * 3600    # when iBorrowDesk turns this server away, ask again once a day
+IBD_ENABLED = os.environ.get("IBORROWDESK", "on").strip().lower() != "off"
+BLOCKED_TEXT = ("Older history isn't available: iBorrowDesk turns away requests from cloud servers "
+                "like this one. This site checks again once a day.")
+OFF_TEXT = "Older history from iBorrowDesk is turned off (IBORROWDESK=off)."
 IBD_REFETCH = 7 * 86400        # and a good one at most weekly, to fill our recording gaps
 IBD_CACHE_AGE = 6 * 3600       # without a database, iBorrowDesk data is kept this long
 MISSING_GUARD = 0.8            # a file with fewer than this share of known tickers isn't trusted
@@ -144,9 +151,19 @@ class MemoryStore:
         self.pts = {}               # (symbol, ts, source) -> (fee, rebate, shares)
         self.fills = {}             # symbol -> {"fetched_at", "status", "first_date"}
         self.run_rows = {}          # ts -> (ok, rows, note)
+        self.symbols = {}           # ibkr -> (yahoo, how, checked_at): Yahoo ticker spellings
 
     def setup(self):
         pass
+
+    def symbols_get(self, ibkrs):
+        with self.lock:
+            return {s: self.symbols[s] for s in ibkrs if s in self.symbols}
+
+    def symbols_put(self, rows):
+        with self.lock:
+            for ibkr, yahoo, how, checked in rows:
+                self.symbols[ibkr] = (yahoo, how, checked)
 
     def latest(self):
         with self.lock:
@@ -232,6 +249,9 @@ SCHEMA = [
          symbol text PRIMARY KEY, fetched_at timestamptz, status text, first_date date)""",
     """CREATE TABLE IF NOT EXISTS recorder_runs (
          ts timestamptz PRIMARY KEY, ok boolean, rows int, note text)""",
+    # Yahoo's spelling of IBKR tickers (common.SymbolMap); yahoo is NULL when Yahoo doesn't carry it
+    """CREATE TABLE IF NOT EXISTS yahoo_symbols (
+         ibkr text PRIMARY KEY, yahoo text, how text, checked_at timestamptz)""",
 ]
 
 
@@ -278,6 +298,19 @@ class PgStore:
 
     def setup(self):
         self._do(lambda cur: None)
+
+    def symbols_get(self, ibkrs):
+        def q(cur):
+            cur.execute("SELECT ibkr, yahoo, how, checked_at FROM yahoo_symbols WHERE ibkr = ANY(%s)", (list(ibkrs),))
+            return {r[0]: (r[1], r[2], r[3]) for r in cur.fetchall()}
+        return self._do(q) if ibkrs else {}
+
+    def symbols_put(self, rows):
+        if rows:
+            self._do(lambda cur: cur.executemany(
+                """INSERT INTO yahoo_symbols (ibkr, yahoo, how, checked_at) VALUES (%s, %s, %s, %s)
+                   ON CONFLICT (ibkr) DO UPDATE SET yahoo = EXCLUDED.yahoo, how = EXCLUDED.how,
+                   checked_at = EXCLUDED.checked_at""", rows))
 
     def latest(self):
         def q(cur):
@@ -418,6 +451,21 @@ def storage_text(size, limit_mb=STORAGE_LIMIT_MB):
 # ------------------------------- iBorrowDesk --------------------------------
 _IBD_LOCK = threading.Lock()
 _IBD_LAST = [0.0]
+
+
+class IbdBlocked(Exception):
+    """iBorrowDesk refused this server (not just one ticker)."""
+
+
+def is_block(exc):
+    """True when iBorrowDesk turned the request away: a 401/403/429 reply, or the connection
+    closed with no reply (how its server drops requests it won't serve). A missing ticker
+    (404) or a slow reply isn't a block."""
+    if isinstance(exc, urllib.error.HTTPError):
+        return exc.code in (401, 403, 429, 444, 451)
+    if isinstance(exc, (http.client.RemoteDisconnected, ConnectionResetError, ConnectionAbortedError)):
+        return True
+    return isinstance(getattr(exc, "reason", None), (ConnectionResetError, ConnectionAbortedError))
 
 
 def fetch_iborrowdesk(symbol, timeout=IBD_TIMEOUT):
@@ -596,6 +644,8 @@ class HistoryService:
         self.lock = threading.Lock()
         self.cache = LRU(500)              # no database: symbol -> (time, parsed iBorrowDesk data)
         self.failed = {}                   # symbol -> (time, error) of the last failed iBorrowDesk lookup
+        self.enabled = IBD_ENABLED         # IBORROWDESK=off skips iBorrowDesk entirely
+        self.blocked_until = 0.0           # iBorrowDesk turned this server away: wait until then
         self.inflight = set()
         self.last_record = 0.0
         self.size = (0.0, None)            # (checked at, bytes)
@@ -657,9 +707,27 @@ class HistoryService:
         entry, as_of = got
         return (parse_as_of(as_of, self.clock()), entry.get("fee"), entry.get("rebate"), entry.get("shares"))
 
+    def ibd_available(self):
+        with self.lock:
+            return self.enabled and time.time() >= self.blocked_until
+
+    def _ibd_reason(self):
+        return OFF_TEXT if not self.enabled else BLOCKED_TEXT
+
     def _ibd(self, symbol):
-        """Fetch and parse; scaled to IBKR's units. Raises on failure."""
-        parsed = parse_iborrowdesk(self.fetch(symbol))
+        """Fetch and parse; scaled to IBKR's units. Raises on failure, IbdBlocked when
+        iBorrowDesk refuses this server (then nothing is asked for a day)."""
+        try:
+            raw = self.fetch(symbol)
+        except Exception as e:
+            if not is_block(e):
+                raise
+            with self.lock:
+                self.blocked_until = time.time() + IBD_BLOCK_PAUSE
+            print(f"Borrow history: iBorrowDesk refused this server ({type(e).__name__}: {e}); "
+                  "trying again in 24 hours.", flush=True)
+            raise IbdBlocked(str(e)) from e
+        parsed = parse_iborrowdesk(raw)
         live = self._live(symbol)
         k = unit_scale(parsed, live[1] if live else None)
         if k != 1.0:
@@ -682,6 +750,8 @@ class HistoryService:
         try:
             try:
                 parsed = self._ibd(symbol)
+            except IbdBlocked:
+                return                     # nothing saved, so this ticker fills in once iBorrowDesk allows it
             except Exception as e:
                 self.store.backfill_set(symbol, now, f"error: {type(e).__name__}: {e}"[:200], None)
                 return
@@ -712,6 +782,8 @@ class HistoryService:
             with self.lock:
                 self.cache[symbol] = (time.time(), parsed)
                 self.failed.pop(symbol, None)
+        except IbdBlocked:
+            pass
         except Exception as e:
             with self.lock:
                 self.failed[symbol] = (time.time(), f"{type(e).__name__}: {e}")
@@ -740,28 +812,35 @@ class HistoryService:
 
     def _from_store(self, sym, rng, now, since):
         fill = self.store.backfill_get(sym)
-        if fill is None:                       # first chart for this ticker: fetch iBorrowDesk's history
+        if fill is None and self.ibd_available():   # first chart for this ticker: fetch iBorrowDesk's history
             self._start(self._backfill, sym)
             fill = self.store.backfill_get(sym)
-            if fill is None:
+            if fill is None and self.ibd_available():
                 return {"symbol": sym, "pending": True}
+        available = self.ibd_available()
         with self.lock:
             running = sym in self.inflight
         rec_start = self.store.recording_started()
         all_runs = self.store.runs(since)
         gaps = find_gaps(all_runs, now, since)
+        fill = fill or {}
+        status = str(fill.get("status") or "")
+        failed = status.startswith("error")
         age = (now - fill["fetched_at"]).total_seconds() if fill.get("fetched_at") else math.inf
-        failed = str(fill.get("status") or "").startswith("error")
-        if not running and ((failed and age > IBD_RETRY_FAILED) or
-                            (not failed and age > IBD_REFETCH and
-                             find_gaps(self.store.runs(fill["fetched_at"]), now, fill["fetched_at"]))):
+        if available and not running and fill and (
+                (failed and age > IBD_RETRY_FAILED) or
+                (not failed and age > IBD_REFETCH and
+                 find_gaps(self.store.runs(fill["fetched_at"]), now, fill["fetched_at"]))):
             self._start(self._backfill, sym)
+            available = self.ibd_available()
+        if not available and (not fill or failed):
+            backfill = {"status": "unavailable", "reason": self._ibd_reason()}
+        else:
+            backfill = {"status": "error" if failed else status, "error": status[7:] if failed else None,
+                        "first_date": fill["first_date"].isoformat() if fill.get("first_date") else None,
+                        "refreshing": running}
         pts = merge(self.store.points(sym, since), rec_start, gaps)
-        return self._response(sym, rng, now, since, pts, gaps, {
-            "status": "error" if failed else fill.get("status"),
-            "error": fill["status"][7:] if failed else None,
-            "first_date": fill["first_date"].isoformat() if fill.get("first_date") else None,
-            "refreshing": running}, rec_start)
+        return self._response(sym, rng, now, since, pts, gaps, backfill, rec_start)
 
     def _from_ibd(self, sym, rng, now, since):
         for attempt in (0, 1):
@@ -770,6 +849,10 @@ class HistoryService:
                 fail = self.failed.get(sym)
             if hit and time.time() - hit[0] < IBD_CACHE_AGE:
                 parsed, backfill = hit[1], {"status": "ok"}
+                break
+            if not self.ibd_available():
+                hit = None
+                parsed, backfill = {"daily": [], "real_time": []}, {"status": "unavailable", "reason": self._ibd_reason()}
                 break
             if fail and time.time() - fail[0] < IBD_RETRY_FAILED:
                 parsed, backfill = {"daily": [], "real_time": []}, {"status": "error", "error": fail[1]}
@@ -806,6 +889,8 @@ class HistoryService:
             note = f"From {et_day(first_own).isoformat()}: recorded by this site from IBKR's file every hour."
         elif ibd:
             note = "This site's own hourly readings will appear as they're recorded."
+        elif rec_start:
+            note = f"Recorded by this site from IBKR's file every hour since {et_day(rec_start).isoformat()}."
         else:
             note = "Recorded by this site from IBKR's file every hour."
         return {

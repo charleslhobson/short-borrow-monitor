@@ -42,17 +42,34 @@ Above the stock table, **+ Add tab** opens a menu with two ways to add a tab:
 - **Ready-made tabs:** Short interest, Price & trading, Performance, Valuation,
   Profitability, Growth, Financial health, Dividends, Analysts, Earnings & events,
   Company and Governance risk. One click adds the tab.
-- **Build your own:** name the tab and tick any of the 127 metrics, mixing Yahoo
+- **Build your own:** name the tab and tick any of the 135 metrics, mixing Yahoo
   metrics with IBKR borrow data (for example short % of float next to borrow fee).
 
 Each tab shows every stock in your list. Click a column header to sort, use
 **Edit columns** to change a tab, and **Download CSV** to export it. Tabs are saved
-in each visitor's browser, like their stock list.
+in each visitor's browser, like their stock list. A line above each table counts
+what's filled and why the rest is blank, for example "312 of 360 cells filled · 36
+don't apply to funds · 12 not on Yahoo".
+
+### Tickers: IBKR's spelling and Yahoo's
+
+The site always shows IBKR's spelling and asks Yahoo for its own (hover a ticker to
+see it): share classes `BRK.B` → `BRK-B`, preferreds `ABR.PRD` → `ABR-PD` (and
+`DCOM.PR` → `DCOM-P`), units `AAC.U` → `AAC-UN`, warrants `.WS` → `-WT`, rights
+`.RT` → `-RI`, when-issued `.WI` → `-WI`. Dotted tickers are checked against Yahoo
+once; when the rule finds nothing and IBKR's file has a full ISIN (IBKR masks US
+ones), Yahoo's ISIN search is tried, accepting only an exact match. Answers, good and
+bad, are remembered for a week (in the database too, when `DATABASE_URL` is set).
+Typing Yahoo's spelling (`BRK-B`, `BAC-PD`, `AAC-UN`) adds IBKR's (`BRK.B`,
+`BAC.PRD`, `AAC.U`). Old or renamed IBKR listings (`.OLD`, `.OLD1`, `.RS`, `.RES`…)
+and IBKR-only lines (restricted, contra, temporary or fractional shares) are never
+looked up: their row says so and still shows IBKR's borrow data, as does any ticker
+Yahoo doesn't carry ("Not on Yahoo Finance; tried X, Y and ISIN Z").
 
 ### Where the values come from
 
 Each value comes from Yahoo's main quote data when Yahoo has it. When Yahoo leaves
-a value out, it's worked out from other Yahoo data instead, one metric at a time:
+a value out, it's worked out from other data instead, one metric at a time:
 
 - **Price history:** price, previous close, day range, volume, 52-week range,
   moving averages, beta (5 years of monthly returns vs SPY, like Yahoo) and every
@@ -63,29 +80,64 @@ a value out, it's worked out from other Yahoo data instead, one metric at a time
 - **Dividend and split history:** dividend rate, trailing dividends, 5-year average
   yield, payout ratio, last dividend and last split.
 - **Analyst data, holders, earnings calendar and share-count history.**
+- **FINRA short interest:** shares short, the prior month's, days to cover and the
+  report date, from FINRA's free twice-monthly file of every exchange-listed and OTC
+  stock and ETF (Yahoo leaves short interest out for ETFs). Marked "FINRA short
+  interest, as of" the report's date.
+- **The issuer's common stock**, for preferreds, units, warrants and rights:
+  sector, location, governance scores, margins and other company-wide figures.
 - **SEC filings** (when `SEC_USER_AGENT` is set): shares outstanding, and revenue,
   net income, operating cash flow and cash from the latest annual report.
 
+**Funds** get fund equivalents, marked with a small *f*: P/E, price/book and
+price/sales of the holdings (Yahoo's fund data), net assets for market cap, the
+premium or discount to NAV, distribution rate, fund family, category, inception date,
+expense ratio, net assets and number of holdings (from SEC filings). For the other
+valuation, profitability, growth, financial health and analyst columns, a
+**look-through** value averages the fund's biggest holdings (up to 15) by weight,
+labelled for example "Look-through: weighted by 64% of holdings". It's shown only
+when the holdings with data cover at least 30% of the fund's stock exposure; below
+that the cell says "holdings unavailable". With `SEC_USER_AGENT` set, holdings come
+from the fund's SEC filing, with swaps looked through to the stock or index they
+track (so leveraged funds like SOXL or TSLL get look-through values); without it,
+from Yahoo's top 10.
+
 Calculated values have a dotted underline. Hover any value to see where it came
-from. A cell with no value says why:
+from. A cell with no value says why, in one of three kinds:
 
 | Shows | Means |
 |---|---|
-| n/a | Doesn't apply: to funds (P/E, margins…), to banks and insurers (gross margin, current ratio), with negative earnings (P/E), or not enough history yet (3-year return for a new listing) |
-| none | There isn't one: no dividend, no splits, no analyst coverage, not rated by ISS, no pre-market or after-hours trades yet |
-| closed | No live bid/ask outside market hours |
-| – | No short-interest report, not in IBKR's borrow file, or no source has it |
+| n/a (grey) | Doesn't apply: to funds (EPS, total debt…), only to funds (expense ratio for a stock), to banks and insurers (gross margin, current ratio), negative earnings (P/E), no dividend, never split, market closed (bid/ask), not enough history yet, or ISS rates only US-listed companies |
+| – | Yahoo has none: no analyst coverage, not rated by ISS, no short-interest report from Yahoo or FINRA, holdings unavailable, or no source has it |
+| retrying… | Temporarily unavailable: Yahoo was busy or unreachable, and the site is trying again |
 
-Only the data an open tab needs is fetched. Quotes are cached for 15 minutes, price
-history for 30, the earnings calendar for 6 hours, and statements, analyst data and
-holders for 12 hours, shared across all visitors. Every Yahoo request on the site
-goes through one rate limit (`YAHOO_CALLS_PER_MIN`, default 150), and the site
-pauses for a minute and a half if Yahoo says it's getting too many requests. The
-first time a stock is opened in a tab it can take a few seconds to load.
+A row still loading after five checks (about 20 seconds) switches to "retrying…" and
+gets a **Retry** link. When Yahoo answers "too many requests", the line above the
+table says "Yahoo is busy; retrying in N s".
 
-To check how many metrics get a value for real tickers, and that calculated values
-agree with Yahoo's own, run `python tools/metric_report.py` (add `-v` to list every
-metric).
+Only the data an open tab needs is fetched, and it's fetched first: once the open tab
+is complete, the page fetches your other tabs ahead using only Yahoo capacity to spare,
+so switching tabs is instant. Quotes are cached for 15 minutes, price history for 30,
+the earnings calendar for 6 hours, and statements, analyst and fund data and holders
+for 12 hours, shared across all visitors. Every Yahoo request on the site goes through
+one rate limit (`YAHOO_CALLS_PER_MIN`, default 150), and the site pauses for a minute
+and a half if Yahoo says it's getting too many requests.
+
+### Checking coverage
+
+`python tools/coverage_report.py` samples IBKR's file (20 each of plain stocks, large
+caps, ADRs, OTC stocks, ETFs, leveraged ETFs, preferreds, units, share classes and old
+listings), runs every metric live, and prints fill % per kind and category, why the
+rest is blank, and any metric that's blank for every large cap. `--compare main` runs
+the same sample on another branch's code for a before/after table, `--timing` adds how
+long 30 tickers take on every tab. The **Metric coverage** GitHub workflow runs it every
+Monday (and on demand from the Actions tab) and fails, with the table in its summary,
+when a metric goes blank for every large cap, which usually means Yahoo renamed or
+dropped a field.
+
+To check how many metrics get a value for particular tickers, and that calculated
+values agree with Yahoo's own, run `python tools/metric_report.py AAPL SPY` (add `-v`
+to list every metric).
 
 ## ETF short screen
 
@@ -179,7 +231,7 @@ of" date in each ETF's details can be a few months old.
 - `CASH_RATE`: the starting "fee for cash & T-bills" (default `0`).
 - `RFR_SPREAD`: the starting spread below the T-bill rate for interest on short
   proceeds (default `1.0`, % per year).
-- `DATABASE_URL`, `STORAGE_LIMIT_MB`, `SHARES_CHANGE_PCT`: see
+- `DATABASE_URL`, `STORAGE_LIMIT_MB`, `SHARES_CHANGE_PCT`, `IBORROWDESK`: see
   [Borrow fee history](#borrow-fee-history).
 
 ### Checking the holdings match
@@ -213,6 +265,10 @@ to see its borrow fee and shares available over time:
     IBKR's file for years. It's fetched once per ticker, the first time anyone opens
     that ticker's chart (that first chart takes a few seconds), and saved. A dotted
     line marks where iBorrowDesk's history ends and this site's readings begin.
+    **As of October 2026 iBorrowDesk turns away requests from cloud servers** (Render's
+    and GitHub's both get "403 Forbidden" or a dropped connection), so charts start on
+    the day this site began recording and the chart says so. The site asks iBorrowDesk
+    again once a day; if it ever allows the request, older history fills in by itself.
   - **Shaded "not recorded"** stretches are 3+ hours when this site's recorder didn't
     run. iBorrowDesk's data fills them where it can.
 - Only changes are saved: a new reading is stored when the fee changes, the rebate
@@ -247,6 +303,8 @@ while people use it. Two recorders can't save the same reading twice.
 
 ### Good to know about the history
 
+- **Also stored:** a small `yahoo_symbols` table remembering Yahoo's spelling of
+  dotted IBKR tickers (see "Tickers: IBKR's spelling and Yahoo's"), a few kilobytes.
 - **Storage.** Neon's free plan holds 0.5 GB. Each saved reading takes about 120
   bytes. The first run saves one reading per ticker (about 2 MB); after that, only
   changes. My estimate is around 50 MB a month, but it depends on how often IBKR's
@@ -265,10 +323,12 @@ while people use it. Two recorders can't save the same reading twice.
   **Record borrow** and re-enable it. GitHub can also start scheduled runs late when
   it's busy.
 - **iBorrowDesk is unofficial.** It's a free site that publishes IBKR's data, with no
-  documented API, so it may change or stop answering. This site asks it for at most
-  one ticker every 2 seconds, only when someone opens a chart, and remembers failures
-  for an hour. `python tools/check_iborrowdesk.py GME AAPL` checks it live and compares
-  its fees with IBKR's file.
+  documented API, and it currently blocks cloud servers (see above). This site asks it
+  for at most one ticker every 2 seconds, only when someone opens a chart. When it
+  refuses the server, the site stops asking for 24 hours; a failure for one ticker is
+  retried after an hour. Set `IBORROWDESK` to `off` to stop asking altogether.
+  `python tools/check_iborrowdesk.py GME AAPL` checks it from your own computer and
+  compares its fees with IBKR's file.
 - `/api/borrow/history?symbol=GME&range=1y` returns a chart's data as JSON.
 
 ## Good to know

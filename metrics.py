@@ -4,12 +4,19 @@ Stock metrics for the Stocks page tabs
 Every metric in CATALOG comes from Yahoo Finance's main quote data (yfinance's
 .info) when Yahoo has it. When it doesn't, the metric falls back on its own:
 price history, financial statements, dividend and split history, analyst data,
-holders, the earnings calendar, share-count history or SEC filings. When there's
-still no value, a reason says why (a fund has no P/E, a company pays no dividend,
-the market is closed...).
+holders, the earnings calendar, share-count history, SEC filings, FINRA's short
+interest file, Yahoo's fund data, the issuer's common stock (for preferreds and
+units) or, for funds, a look-through average of the fund's biggest holdings.
+When there's still no value, a reason says why, in one of three kinds:
+  na    doesn't apply (a fund has no EPS, a company pays no dividend), shown "n/a"
+  none  Yahoo has none, shown "–"
+  temp  temporarily unavailable (Yahoo busy or unreachable), shown "retrying…"
+Tickers Yahoo doesn't carry at all get one message for the whole row.
 
-Sources are fetched only when a metric on the open tab needs them, each is cached
-separately, and every Yahoo call goes through the shared rate limiter (common.py).
+Every Yahoo call uses Yahoo's spelling of the ticker (common.yahoo_symbol) and goes
+through the shared rate limiter (common.py). Sources are fetched only when a metric
+on the open tab needs them, each is cached separately, and other tabs are fetched
+ahead only with Yahoo capacity to spare.
 """
 
 import json
@@ -18,8 +25,10 @@ import re
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, wait
+from datetime import date
 
-from common import LRU, YahooBusy, is_rate_limit, yahoo_call
+import common
+from common import LRU, YAHOO, YahooBusy, ibkr_symbol, is_rate_limit, listing_message, set_call_reserve, yahoo_call
 
 
 # ------------------------------- catalog -----------------------------------
@@ -90,7 +99,7 @@ CATALOG = [
         M("rsi_14", "RSI (14 day)", "num1"),
      ]},
     {"id": "valuation", "label": "Valuation", "preset": True,
-     "desc": "Market cap, P/E, price-to-book, EV multiples and EPS", "metrics": [
+     "desc": "Market cap, P/E, price-to-book, EV multiples, EPS and NAV premium", "metrics": [
         M("marketCap", "Market cap", "bigmoney"),
         M("enterpriseValue", "Enterprise value", "bigmoney"),
         M("trailingPE", "P/E (trailing)", "ratio"),
@@ -104,6 +113,7 @@ CATALOG = [
         M("trailingEps", "EPS (trailing)", "money"),
         M("forwardEps", "EPS (forward)", "money"),
         M("epsCurrentYear", "EPS estimate, this year", "money"),
+        M("nav_premium", "Premium / discount to NAV", "pct", True),
      ]},
     {"id": "profitability", "label": "Profitability", "preset": True,
      "desc": "Margins and returns on assets and equity", "metrics": [
@@ -137,9 +147,10 @@ CATALOG = [
         M("quickRatio", "Quick ratio", "num2"),
      ]},
     {"id": "dividends", "label": "Dividends", "preset": True,
-     "desc": "Dividend rate, yield, payout ratio and dates", "metrics": [
+     "desc": "Dividend rate, yield, distribution rate, payout ratio and dates", "metrics": [
         M("dividendRate", "Dividend / share (yearly)", "money"),
         M("yield_calc", "Dividend yield", "pct"),
+        M("distribution_rate", "Distribution rate", "pct"),
         M("trailingAnnualDividendRate", "Trailing dividend", "money"),
         M("trailingAnnualDividendYield", "Trailing yield", "pct"),
         M("fiveYearAvgDividendYield", "5-yr avg yield", "pct100"),
@@ -171,7 +182,7 @@ CATALOG = [
         M("firstTradeDateMilliseconds", "First trade date", "date_ms"),
      ]},
     {"id": "company", "label": "Company", "preset": True,
-     "desc": "Name, sector, industry, location and employees", "metrics": [
+     "desc": "Name, sector, location and employees; family, category, costs and size for funds", "metrics": [
         M("longName", "Name", "text"),
         M("sector", "Sector", "text"),
         M("industry", "Industry", "text"),
@@ -182,6 +193,12 @@ CATALOG = [
         M("quoteType", "Type", "text"),
         M("currency", "Currency", "text"),
         M("website", "Website", "text"),
+        M("fundFamily", "Fund family", "text"),
+        M("category", "Fund category", "text"),
+        M("fundInceptionDate", "Fund inception", "date"),
+        M("expenseRatio", "Expense ratio", "pct100"),
+        M("netAssets", "Net assets", "bigmoney"),
+        M("holdingsCount", "Holdings", "int"),
      ]},
     {"id": "risk", "label": "Governance risk", "preset": True,
      "desc": "ISS governance scores, 1 (low risk) to 10 (high risk)", "metrics": [
@@ -203,25 +220,38 @@ CATALOG = [
 GROUP_OF = {m["key"]: g["id"] for g in CATALOG for m in g["metrics"]}
 YAHOO_KEYS = [k for k, g in GROUP_OF.items() if g != "borrow"]
 PERF_KEYS = {m["key"] for g in CATALOG if g["id"] == "performance" for m in g["metrics"]}
-ALWAYS_CALCULATED = PERF_KEYS | {"short_change", "yield_calc", "target_upside"}
+ALWAYS_CALCULATED = PERF_KEYS | {"short_change", "yield_calc", "target_upside", "nav_premium", "distribution_rate"}
 
-# Why a metric has no value. code -> (short word shown in the cell, full reason)
+# Why a metric has no value: code -> (kind, full reason, short label for the coverage note).
+# Kinds: na = doesn't apply ("n/a"), none = Yahoo has none ("–"), temp = temporarily
+# unavailable ("retrying…"). Whole rows Yahoo doesn't carry get common.listing_message.
 REASONS = {
-    "fund": ("n/a", "Doesn't apply to funds"),
-    "bank": ("n/a", "Doesn't apply to banks/insurers"),
-    "no_dividend": ("none", "No dividend"),
-    "no_splits": ("none", "No splits"),
-    "neg_earnings": ("n/a", "Negative earnings"),
-    "no_growth": ("n/a", "Earnings aren't growing"),
-    "closed": ("closed", "Market closed: no live quote"),
-    "no_pre": ("none", "No pre-market trading yet"),
-    "no_post": ("none", "No after-hours trading yet"),
-    "history": ("n/a", "Not enough history"),
-    "no_analysts": ("none", "No analyst coverage"),
-    "no_iss": ("none", "Not rated by ISS"),
-    "no_short": ("–", "No short-interest report"),
-    "unreachable": ("–", "Couldn't reach Yahoo just now; retrying"),
-    "no_data": ("–", "Yahoo has no data for this"),
+    "fund": ("na", "Doesn't apply to funds", "don't apply to funds"),
+    "fund_only": ("na", "Only applies to funds", "apply only to funds"),
+    "no_stocks": ("na", "The fund holds no stocks to look through", "fund holds no stocks"),
+    "bank": ("na", "Doesn't apply to banks and insurers", "don't apply to banks"),
+    "no_dividend": ("na", "Pays no dividend", "no dividend"),
+    "no_splits": ("na", "Has never split", "never split"),
+    "neg_earnings": ("na", "Earnings are negative", "negative earnings"),
+    "no_growth": ("na", "Earnings aren't growing", "earnings not growing"),
+    "closed": ("na", "Market closed: no live quote", "market closed"),
+    "no_pre": ("na", "No pre-market trading yet", "no pre-market trades"),
+    "no_post": ("na", "No after-hours trading yet", "no after-hours trades"),
+    "history": ("na", "Not enough history", "too new"),
+    "iss_us_only": ("na", "ISS rates US-listed companies only", "ISS: US companies only"),
+    "neg_base": ("na", "Growth from a negative or zero year-earlier figure isn't meaningful", "negative base"),
+    "common_only": ("na", "Analysts cover the issuer's common stock, not this security", "analysts cover the common"),
+    "no_analysts": ("none", "No analyst coverage on Yahoo", "no analyst coverage"),
+    "no_iss": ("none", "Not rated by ISS", "not rated by ISS"),
+    "no_short": ("none", "No short-interest report from Yahoo or FINRA", "no short report"),
+    "no_nav": ("none", "Yahoo has no NAV for this fund", "no NAV"),
+    "top10_only": ("none", "Only the top 10 holdings are known (Yahoo); SEC filings would give the full count",
+                   "holding count unknown"),
+    "holdings_unavailable": ("none", "Holdings unavailable", "holdings unavailable"),
+    "no_data": ("none", "Yahoo has no data for this", "Yahoo has none"),
+    "unreachable": ("temp", "Couldn't reach Yahoo just now; retrying", "retrying"),
+    "busy": ("temp", "Yahoo is busy; retrying", "retrying"),
+    "finra_down": ("temp", "Couldn't load FINRA's short interest file just now; retrying", "retrying"),
 }
 # Where a value came from. source -> (label, calculated by this site?)
 SOURCES = {
@@ -236,24 +266,61 @@ SOURCES = {
     "calendar": ("Yahoo earnings calendar", False),
     "shares": ("Yahoo share-count history", False),
     "sec": ("SEC filings", False),
+    "finra": ("FINRA short interest", False),
+    "fund": ("Fund data (Yahoo)", False),
+    "issuer": ("The issuer's common stock on Yahoo", False),
+    "lookthrough": ("Look-through", True),
     "calculated": ("Calculated from other values", True),
 }
 
-TTL = {"info": 15 * 60, "hist": 30 * 60, "intraday": 2 * 60, "statements": 12 * 3600,
+STATEMENT_PARTS = {"qi": "quarterly_income_stmt", "qb": "quarterly_balance_sheet", "qc": "quarterly_cashflow",
+                   "ai": "income_stmt"}          # each fetched only when a fallback needs it
+TTL = {"info": 15 * 60, "hist": 30 * 60, "intraday": 5 * 60, **{f"stmt_{p}": 12 * 3600 for p in STATEMENT_PARTS},
        "analysts": 12 * 3600, "holders": 12 * 3600, "calendar": 6 * 3600, "shares": 12 * 3600,
-       "sec": 24 * 3600}
-CACHE_LIMITS = {"hist": 300, "intraday": 100, "sec": 60}     # others: 400 tickers
+       "sec": 24 * 3600, "funds": 12 * 3600, "fundhold": 12 * 3600}
+CACHE_LIMITS = {"hist": 300, "intraday": 100, "sec": 60, "funds": 200, "fundhold": 200}   # others: 600 tickers
 ERROR_MAX_AGE = 2 * 60
+NO_DATA_RE = re.compile(r"\b404\b|not found|no data found|no fundamentals|no (price|financial)", re.I)
+BUSY_MAX_AGE = 20               # "Yahoo is busy" answers are retried sooner
 WAIT_SEC = 8
+ROUNDS = 3
+FOREGROUND, PREFETCH = 0, 1
+PREFETCH_SHARE = 0.4            # prefetching leaves this share of Yahoo's per-minute budget free
 FUND_TYPES = {"ETF", "MUTUALFUND", "MONEYMARKET"}
-FUND_SKIP_SOURCES = {"statements", "analysts", "sec"}
+FUND_SKIP_SOURCES = {*(f"stmt_{p}" for p in STATEMENT_PARTS), "analysts", "sec"}
+FUND_ONLY_SOURCES = {"funds", "fundhold"}
 FUND_NA_GROUPS = {"valuation", "profitability", "growth", "financials", "analysts", "risk"}
 FUND_NA_KEYS = {"earningsTimestamp", "mostRecentQuarter", "lastFiscalYearEnd", "nextFiscalYearEnd",
-                "country", "city", "fullTimeEmployees", "website", "floatShares", "payoutRatio"}
+                "country", "city", "fullTimeEmployees", "website", "floatShares", "payoutRatio",
+                "shortPercentOfFloat", "heldPercentInsiders", "industry"}
+FUND_ONLY = {"nav_premium", "distribution_rate", "fundFamily", "category", "fundInceptionDate", "expenseRatio",
+             "netAssets", "holdingsCount"}
 BANK_NA = {"grossMargins", "ebitdaMargins", "ebitda", "grossProfits", "enterpriseToEbitda",
            "currentRatio", "quickRatio"}
 SHORT_REPORT_KEYS = {"sharesShort", "sharesShortPriorMonth", "dateShortInterest", "shortPercentOfFloat",
                      "shortRatio", "sharesPercentSharesOut", "short_change"}
+# Look-through for funds: the holdings-weighted average of each holding's value.
+# Multiples are averaged as a weighted harmonic mean (the fund's price over its
+# share of the holdings' earnings, sales...), skipping holdings with negative values.
+LOOK_KEYS = {**{k: "harmonic" for k in ("trailingPE", "forwardPE", "trailingPegRatio", "priceToBook",
+                                        "priceToSalesTrailing12Months", "enterpriseToRevenue", "enterpriseToEbitda")},
+             **{k: "mean" for k in ("grossMargins", "operatingMargins", "ebitdaMargins", "profitMargins",
+                                    "returnOnAssets", "returnOnEquity", "revenueGrowth", "earningsGrowth",
+                                    "earningsQuarterlyGrowth", "debtToEquity", "currentRatio", "quickRatio",
+                                    "recommendationMean", "target_upside")}}
+LOOK_MIN = 0.30                 # below this share of a fund's stock holdings, no look-through value
+GROWTH_ROWS = {"revenueGrowth": ("Total Revenue",), "earningsGrowth": ("Diluted EPS", "Basic EPS"),
+               "earningsQuarterlyGrowth": ("Net Income",)}    # the statement rows each growth fallback compares
+# Company-level facts a preferred, unit, warrant or right shares with its issuer's common stock.
+ISSUER_SUFFIX = re.compile(r"PR[A-Z]?|U|WS|RT")
+ISSUER_KEYS = {"sector", "industry", "country", "city", "fullTimeEmployees", "website", "overallRisk", "auditRisk",
+               "boardRisk", "compensationRisk", "shareHolderRightsRisk", "grossMargins", "operatingMargins",
+               "ebitdaMargins", "profitMargins", "returnOnAssets", "returnOnEquity", "revenueGrowth",
+               "earningsGrowth", "earningsQuarterlyGrowth", "totalRevenue", "grossProfits", "ebitda",
+               "netIncomeToCommon", "operatingCashflow", "freeCashflow", "totalCash", "totalDebt", "debtToEquity",
+               "currentRatio", "quickRatio", "mostRecentQuarter", "lastFiscalYearEnd", "nextFiscalYearEnd",
+               "earningsTimestamp"}
+OTC_EXCHANGES = {"PNK", "OQB", "OQX", "OID", "OBB", "OEM", "OGM", "OTC"}
 # Days of history a metric needs; below this the reason is "Not enough history".
 HISTORY_DAYS = {"perf_1d": 2, "perf_5d": 8, "perf_1m": 31, "perf_3m": 92, "perf_6m": 183, "perf_1y": 366,
                 "perf_3y": 3 * 366, "perf_5y": 5 * 366, "range_pos": 28, "vol_30d": 28, "max_dd_1y": 28,
@@ -261,6 +328,11 @@ HISTORY_DAYS = {"perf_1d": 2, "perf_5d": 8, "perf_1m": 31, "perf_3m": 92, "perf_
                 "fiftyDayAverageChangePercent": 72, "twoHundredDayAverageChangePercent": 290}
 RATING = [(1.5, "strong_buy", "Strong Buy"), (2.5, "buy", "Buy"), (3.5, "hold", "Hold"),
           (4.5, "underperform", "Underperform"), (99, "sell", "Sell")]
+SECTOR_NAMES = {"realestate": "Real Estate", "consumer_cyclical": "Consumer Cyclical",
+                "basic_materials": "Basic Materials", "consumer_defensive": "Consumer Defensive",
+                "technology": "Technology", "communication_services": "Communication Services",
+                "financial_services": "Financial Services", "utilities": "Utilities", "industrials": "Industrials",
+                "energy": "Energy", "healthcare": "Healthcare"}
 
 
 # ------------------------------- helpers -----------------------------------
@@ -306,10 +378,6 @@ def epoch(ts):
     return int(t.timestamp())
 
 
-def ysym(sym):
-    return sym.replace(".", "-")
-
-
 def fmt_ratio(r):
     s = f"{r:.4f}".rstrip("0").rstrip(".")
     return s
@@ -320,10 +388,11 @@ def split_text(r):
 
 
 # ------------------------------- fetchers ----------------------------------
-# Each returns a small dict (cached per ticker) or raises. Every Yahoo request
-# goes through yahoo_call, which waits for a slot in the shared rate limiter.
-def fetch_info(yf, sym):
-    info = yahoo_call(lambda: yf.Ticker(ysym(sym)).info) or {}
+# Each takes Yahoo's spelling of the ticker and returns a small dict (cached per
+# ticker) or raises. Every Yahoo request goes through yahoo_call, which waits for a
+# slot in the shared rate limiter.
+def fetch_info(yf, ysym):
+    info = yahoo_call(lambda: yf.Ticker(ysym).info) or {}
     clean = {k: clean_value(v) for k, v in info.items()}
     clean = {k: v for k, v in clean.items() if v is not None and v != ""}
     return {"info": clean, "empty": len(clean) < 5}
@@ -336,12 +405,12 @@ def _naive(index):
     return idx
 
 
-def fetch_hist(yf, sym):
+def fetch_hist(yf, ysym):
     import pandas as pd
-    t = yf.Ticker(ysym(sym))
+    t = yf.Ticker(ysym)
     h = yahoo_call(lambda: t.history(period="max", interval="1d", auto_adjust=False, actions=True))
     if h is None or h.empty or "Close" not in h:
-        return {"_error": "Yahoo has no price history for this ticker"}
+        return {"_error": "Yahoo has no price history for this ticker", "nodata": True}
     try:
         meta = dict(t.history_metadata or {})
     except Exception:
@@ -384,8 +453,8 @@ def _session_bounds(meta):
         return pd.Timestamp("09:30").time(), pd.Timestamp("16:00").time()
 
 
-def fetch_intraday(yf, sym):
-    t = yf.Ticker(ysym(sym))
+def fetch_intraday(yf, ysym):
+    t = yf.Ticker(ysym)
     h = yahoo_call(lambda: t.history(period="5d", interval="5m", prepost=True))
     try:
         meta = dict(t.history_metadata or {})
@@ -422,26 +491,16 @@ def _table(df):
     return out
 
 
-def fetch_statements(yf, sym):
-    t = yf.Ticker(ysym(sym))
-    out = {}
-    for key, attr in (("qi", "quarterly_income_stmt"), ("qb", "quarterly_balance_sheet"),
-                      ("qc", "quarterly_cashflow"), ("ai", "income_stmt")):
-        try:
-            out[key] = _table(yahoo_call(lambda a=attr: getattr(t, a)))
-        except YahooBusy:
-            raise
-        except Exception as e:
-            if is_rate_limit(e):
-                raise
-            out[key] = {}
-    if not any(out.values()):
-        return {"_error": "Yahoo has no financial statements for this ticker"}
-    return out
+def fetch_statement(part):
+    """One of Yahoo's financial statements (quarterly income, balance sheet, cash flow, or annual income)."""
+    def fetch(yf, ysym):
+        rows = _table(yahoo_call(lambda: getattr(yf.Ticker(ysym), STATEMENT_PARTS[part])))
+        return {"rows": rows} if rows else {"_error": "Yahoo has no financial statements for this ticker", "nodata": True}
+    return fetch
 
 
-def fetch_analysts(yf, sym):
-    t = yf.Ticker(ysym(sym))
+def fetch_analysts(yf, ysym):
+    t = yf.Ticker(ysym)
     out = {"targets": {}, "counts": {}, "est": {}}
     try:
         targets = yahoo_call(lambda: t.analyst_price_targets) or {}
@@ -468,8 +527,8 @@ def fetch_analysts(yf, sym):
     return out
 
 
-def fetch_holders(yf, sym):
-    df = yahoo_call(lambda: yf.Ticker(ysym(sym)).major_holders)
+def fetch_holders(yf, ysym):
+    df = yahoo_call(lambda: yf.Ticker(ysym).major_holders)
     out = {}
     if df is not None and not df.empty:
         if "Value" in df.columns:
@@ -487,8 +546,8 @@ def fetch_holders(yf, sym):
     return out
 
 
-def fetch_calendar(yf, sym):
-    cal = yahoo_call(lambda: yf.Ticker(ysym(sym)).calendar) or {}
+def fetch_calendar(yf, ysym):
+    cal = yahoo_call(lambda: yf.Ticker(ysym).calendar) or {}
     out = {"earnings": [], "exdiv": None}
     for d in cal.get("Earnings Date") or []:
         try:
@@ -503,15 +562,59 @@ def fetch_calendar(yf, sym):
     return out
 
 
-def fetch_shares(yf, sym):
+def fetch_shares(yf, ysym):
     import pandas as pd
     start = (pd.Timestamp.today() - pd.DateOffset(months=18)).strftime("%Y-%m-%d")
-    s = yahoo_call(lambda: yf.Ticker(ysym(sym)).get_shares_full(start=start))
+    s = yahoo_call(lambda: yf.Ticker(ysym).get_shares_full(start=start))
     if s is None or len(s) == 0:
         return {"shares": None}
     s = s.dropna()
     return {"shares": to_float(s.iloc[-1]) if len(s) else None,
             "as_of": str(s.index[-1])[:10] if len(s) else None}
+
+
+def fetch_funds(yf, ysym):
+    """Yahoo's fund data (one request): the holdings' valuation multiples (Yahoo
+    sends them inverted: 0.0413 means a P/E of 24.2), costs, family, category,
+    sector weights, asset mix and top 10 holdings."""
+    t = yf.Ticker(ysym)
+
+    def read():
+        fd = t.funds_data
+        return (fd.fund_overview, fd.fund_operations, fd.equity_holdings, fd.sector_weightings,
+                fd.asset_classes, fd.top_holdings)
+    try:
+        overview, ops, eq, sectors, assets, top = yahoo_call(read)
+    except YahooBusy:
+        raise
+    except Exception as e:
+        if is_rate_limit(e):
+            raise
+        if not re.search(r"no fund|not found|404", str(e), re.I):
+            raise                              # a failed request: retried
+        overview = ops = eq = sectors = assets = top = None      # Yahoo has no fund data for it
+    out = {"overview": {k: v for k, v in (overview or {}).items() if v}, "ratios": {}, "sectors": {},
+           "assets": {}, "top": []}
+
+    def first_col(df):
+        if df is None or getattr(df, "empty", True):
+            return {}
+        return {str(k): to_float(v) for k, v in df.iloc[:, 0].items()}
+    for name, key in (("Price/Earnings", "pe"), ("Price/Book", "pb"), ("Price/Sales", "ps"), ("Price/Cashflow", "pcf")):
+        v = first_col(eq).get(name)
+        if v and v > 0:
+            out["ratios"][key] = 1 / v
+    er = first_col(ops).get("Annual Report Expense Ratio")
+    if er:
+        out["expense"] = er * 100
+    out["sectors"] = {k: to_float(v) for k, v in (sectors or {}).items() if to_float(v)}
+    out["assets"] = {k: to_float(v) for k, v in (assets or {}).items() if to_float(v) is not None}
+    if top is not None and not getattr(top, "empty", True):
+        for sym, row in top.iterrows():
+            w = to_float(row.get("Holding Percent"))
+            if w and w > 0:
+                out["top"].append((str(sym).upper(), str(row.get("Name") or sym)[:80], w))
+    return out
 
 
 class SecFacts:
@@ -528,12 +631,12 @@ class SecFacts:
                 d = json.loads(self.client.get("https://www.sec.gov/files/company_tickers.json"))
                 self.ciks = {str(r["ticker"]).upper(): int(r["cik_str"]) for r in d.values()}
                 self.ciks_at = time.time()
-        return self.ciks.get(sym.upper()) or self.ciks.get(ysym(sym).upper())
+        return self.ciks.get(sym.upper()) or self.ciks.get((common.yahoo_symbol(sym) or sym).upper())
 
     def fetch(self, sym):
         cik = self.cik(sym)
         if not cik:
-            return {"_error": "Not an SEC filer"}
+            return {"_error": "Not an SEC filer", "nodata": True}
         facts = json.loads(self.client.get(f"https://data.sec.gov/api/xbrl/companyfacts/CIK{cik:010d}.json"))
         f = facts.get("facts", {})
 
@@ -566,29 +669,46 @@ class SecFacts:
 class Ctx:
     """Works out every metric for one ticker from whatever sources are loaded.
 
-    source(name) returns a source's data, or None when it isn't loaded yet (it's
-    then requested, and every metric being worked out is marked as loading) or
-    failed (those metrics may get the "couldn't reach Yahoo" reason).
+    lookup(source, symbol) returns a cached source, or None when it isn't loaded yet
+    (it's then requested, and every metric being worked out is marked as loading).
+    Sources of other tickers are read the same way: SPY for beta, the issuer's
+    common stock for preferreds and units, and a fund's holdings for look-through.
+    A light Ctx (one fund holding) uses that holding's Yahoo .info only.
     """
 
-    def __init__(self, sym, sources, spy=None, sec_enabled=False):
-        self.sym, self.sources, self.spy_data, self.sec_enabled = sym, sources, spy, sec_enabled
+    def __init__(self, sym, lookup, sec_enabled=False, finra=None, ibkr=None, holdings_service=False,
+                 light=False):
+        self.sym, self.lookup, self.sec_enabled = sym, lookup, sec_enabled
+        self.finra, self.ibkr, self.holdings_service, self.light = finra, ibkr or {}, holdings_service, light
         self.memo, self.stack = {}, []
         self.needs, self.used = set(), set()
-        self.pending_keys, self.failed_keys = set(), set()
+        self.pending_keys, self.failed_keys, self.busy_keys = set(), set(), set()
+        self.children, self.look_why = {}, {}
+        self.finra_failed, self.top10_only = False, False
 
     # ---- sources
-    def source(self, name):
-        if name in FUND_SKIP_SOURCES and self.is_fund():
+    def source(self, name, sym=None):
+        sym = sym or self.sym
+        if self.light and (name != "info" or sym != self.sym):
+            return None                      # a fund holding: Yahoo's .info only
+        if sym == self.sym and name in FUND_SKIP_SOURCES and self.is_fund():
             return None                      # funds have no statements, analysts or SEC company facts
-        self.used.add(name)
-        d = self.sources.get(name)
+        if sym == self.sym and name in FUND_ONLY_SOURCES and not self.is_fund():
+            return None
+        if sym == self.sym and name == "analysts" and self.issuer():
+            return None                      # analysts cover the common stock, not a preferred or unit
+        key = (name, sym)
+        self.used.add(key)
+        d = self.lookup(name, sym)
         if d is None:
-            self.needs.add(name)
+            self.needs.add(key)
             self.pending_keys.update(self.stack)
             return None
         if "_error" in d:
-            self.failed_keys.update(self.stack)
+            if not d.get("nodata"):              # "Yahoo has none" is an answer, not a failure to retry
+                self.failed_keys.update(self.stack)
+                if d.get("busy"):
+                    self.busy_keys.update(self.stack)
             return None
         return d
 
@@ -614,18 +734,11 @@ class Ctx:
         return h["meta"].get(key) if h else None
 
     def spy(self):
-        if self.sym == "SPY":
-            return self.hist()
-        self.used.add("spy")
-        if self.spy_data is None:
-            self.needs.add("spy")
-            self.pending_keys.update(self.stack)
-            return None
-        return None if "_error" in self.spy_data else self.spy_data
+        return self.source("hist", "SPY")
 
     def stmt(self, part):
-        s = self.source("statements")
-        return s.get(part) if s else None
+        s = self.source(f"stmt_{part}")
+        return s.get("rows") if s else None
 
     def sec(self, field):
         if not self.sec_enabled or self.is_fund():
@@ -633,6 +746,74 @@ class Ctx:
         s = self.source("sec")
         v = (s or {}).get(field)
         return v[0] if v else None
+
+    def funds(self):
+        return self.source("funds") if self.is_fund() else None
+
+    def issuer(self):
+        """The issuer's common stock (ABR for ABR.PRD), for preferreds, units, warrants and rights."""
+        base, dot, suffix = self.sym.partition(".")
+        return base if dot and not self.light and ISSUER_SUFFIX.fullmatch(suffix) else None
+
+    def issuer_info(self, name):
+        """A company fact from the issuer's common stock, when its name matches (a unit's base
+        ticker could belong to another company)."""
+        base = self.issuer()
+        d = self.source("info", base) if base else None
+        if not d:
+            return None
+        own = self.ibkr.get("name") or self.info("longName", "shortName")
+        if not common.same_company(own, d["info"].get("longName") or d["info"].get("shortName")):
+            return None
+        return d["info"].get(name)
+
+    def finra_row(self):
+        if self.light or self.finra is None:
+            return None
+        state = self.finra.state()
+        if state == "loading":
+            self.needs.add(("finra", None))
+            self.pending_keys.update(self.stack)
+            return None
+        if state == "error":
+            self.finra_failed = True
+            return None
+        return self.finra.lookup(self.sym, self.ibkr.get("name"))
+
+    def holdings(self):
+        """{"weights": [(IBKR ticker, weight)...], "equity": stock exposure, "count", "source"} for a fund."""
+        if not self.is_fund():
+            return None
+        service = None
+        if self.holdings_service:              # the fund's filing (etf.py), swaps looked through
+            d = self.lookup("fundhold", self.sym)
+            self.used.add(("fundhold", self.sym))
+            if d is None:
+                self.needs.add(("fundhold", self.sym))
+                self.pending_keys.update(self.stack)
+                return None
+            if "_error" not in d:
+                service = d
+        if service and service.get("weights"):
+            self.top10_only = not service.get("count")
+            return service
+        f = self.funds()                       # Yahoo's top 10 instead
+        if not f or not f.get("top"):
+            return service
+        weights = [(ibkr_symbol(s), w) for s, _, w in f["top"] if "." not in s and ibkr_symbol(s)]
+        stocks = (f.get("assets") or {}).get("stockPosition")
+        equity = stocks if stocks and stocks > 0 else sum(w for _, w in weights)
+        self.top10_only = not (service and service.get("count"))
+        return {"weights": weights, "equity": equity, "count": (service or {}).get("count"), "source": "Yahoo top 10"}
+
+    def child(self, sym):
+        """One holding of this fund, worked out from its Yahoo .info; None while it loads."""
+        if self.source("info", sym) is None:
+            return None
+        c = self.children.get(sym)
+        if c is None:
+            c = self.children[sym] = Ctx(sym, self.lookup, light=True)
+        return c
 
     # ---- values
     def v(self, key):
@@ -679,6 +860,12 @@ class Ctx:
         sector, industry = self.info("sector") or "", self.info("industry") or ""
         return sector == "Financial Services" and bool(
             re.search(r"Bank|Insurance|Capital Markets|Credit|Mortgage|Asset Management|Financial", industry))
+
+    def non_us(self):
+        """A foreign company, or one traded only over the counter (ISS doesn't rate these)."""
+        country = self.info("country") or self.issuer_info("country")
+        exchange = (self.info("exchange") or self.meta("exchangeName") or "").upper()
+        return (bool(country) and country != "United States") or exchange in OTC_EXCHANGES
 
     def no_dividends(self):
         h = self.hist()
@@ -729,17 +916,29 @@ def nonpositive(x):
 
 def reason_for(k, c):
     group = GROUP_OF.get(k)
-    info_failed = "_error" in (c.sources.get("info") or {})
+    info = c.lookup("info", c.sym) or {}
+    info_failed = "_error" in info
+    temp = "busy" if k in c.busy_keys else "unreachable"
     if k in ("bid", "ask", "bidSize", "askSize"):
         if info_failed:
-            return "unreachable", None
+            return temp, None
         return ("closed", None) if c.info("marketState") != "REGULAR" else ("no_data", None)
     if k == "preMarketPrice":
         return "no_pre", None
     if k == "postMarketPrice":
         return "no_post", None
-    if c.is_fund() and (group in FUND_NA_GROUPS or k in FUND_NA_KEYS):
-        return "fund", None
+    fund = c.is_fund()
+    if k in FUND_ONLY and not fund:
+        return "fund_only", None
+    if fund:
+        if k in c.look_why:
+            return c.look_why[k]
+        if k == "nav_premium":
+            return "no_nav", None
+        if k == "holdingsCount" and c.top10_only:
+            return "top10_only", None
+        if group in FUND_NA_GROUPS or k in FUND_NA_KEYS or k == "recommendationKey" or k == "averageAnalystRating":
+            return "fund", None
     if group == "dividends" and c.no_dividends():
         return "no_dividend", None
     if k in ("lastSplitFactor", "lastSplitDate") and c.no_splits():
@@ -755,16 +954,24 @@ def reason_for(k, c):
         return "no_growth", None
     if c.is_financial() and k in BANK_NA:
         return "bank", None
-    if k in c.failed_keys and not c.sources.get("info", {}).get("info"):
-        return "unreachable", None
+    if k in GROWTH_ROWS and not fund:          # the statements were already read while trying the metric
+        vals = rows(c, "qi", *GROWTH_ROWS[k])
+        if vals:
+            pair = year_ago(vals)
+            if pair is None:
+                return "history", "No quarter a year earlier in Yahoo's statements"
+            if pair[1] <= 0:
+                return "neg_base", None
+    if k in c.failed_keys and not info.get("info"):
+        return temp, None
     if group == "analysts" or k in ("forwardEps", "epsCurrentYear", "forwardPE"):
-        return "no_analysts", None
+        return ("common_only", None) if c.issuer() else ("no_analysts", None)
     if group == "risk":
-        return "no_iss", None
+        return ("iss_us_only", None) if c.non_us() else ("no_iss", None)
     if k in SHORT_REPORT_KEYS:
-        return "no_short", None
+        return ("finra_down", None) if c.finra_failed else ("no_short", None)
     if k in c.failed_keys:
-        return "unreachable", None
+        return temp, None
     return "no_data", None
 
 
@@ -1098,9 +1305,11 @@ def rating(field):
         mean = c.v("recommendationMean")
         if mean is None:
             return None
+        looked = c.memo.get("recommendationMean", (None, None))[1] == "lookthrough"
         for top, key, label in RATING:
             if mean < top:
-                return key if field == "key" else f"{round(mean + 1e-9, 1):.1f} - {label}"
+                out = key if field == "key" else f"{round(mean + 1e-9, 1):.1f} - {label}"
+                return (out, "From the holdings' weighted rating score") if looked else out
     return fn
 
 
@@ -1126,8 +1335,8 @@ def holder(name):
     return fn
 
 
-def fund_info(name):
-    return lambda c: c.info(name) if c.is_fund() else None
+def fund_info(*names):
+    return lambda c: c.info(*names) if c.is_fund() else None
 
 
 def next_fiscal_year(c):
@@ -1173,30 +1382,185 @@ def calc(f, note=None):
     return fn
 
 
+
+# ---- short interest from FINRA's file
+def day_epoch(text):
+    """Epoch seconds (UTC midnight, like Yahoo's dateShortInterest) for 'YYYY-MM-DD'."""
+    try:
+        return epoch(date.fromisoformat(str(text)[:10]).isoformat())
+    except ValueError:
+        return None
+
+
+def finra(field):
+    def fn(c):
+        r = c.finra_row()
+        if not r:
+            return None
+        note = f"as of {r['date']}"           # shown as "FINRA short interest, as of 2026-09-30"
+        if field == "short":
+            v = r["short"]
+        elif field == "month_ago":
+            v, note = r["month_ago"], f"as of {r.get('month_ago_date')}"
+        elif field == "date":
+            v = day_epoch(r["date"])
+        else:                                   # days to cover (FINRA's own figure is floored at 1)
+            v = r["short"] / r["adv"] if r["short"] is not None and r["adv"] else None
+            note = f"as of {r['date']}: shares short ÷ average daily volume"
+        return (v, note) if v is not None else None
+    return fn
+
+
+# ---- funds: Yahoo's fund data and .info fields only funds have
+def fund_ratio(key):
+    def fn(c):
+        f = c.funds()
+        v = ((f or {}).get("ratios") or {}).get(key)
+        return (v, "Of the fund's holdings, weighted (Yahoo)") if v else None
+    return fn
+
+
+def net_assets(c):
+    if not c.is_fund():
+        return None
+    v = c.info("totalAssets", "netAssets")
+    return (v, "Net assets: a fund's market cap") if isinstance(v, (int, float)) and v > 0 else None
+
+
+def fund_shares(c):
+    if not c.is_fund():
+        return None
+    assets, nav = c.info("totalAssets", "netAssets"), c.info("navPrice")
+    if isinstance(assets, (int, float)) and isinstance(nav, (int, float)) and assets > 0 and nav > 0:
+        return assets / nav, "Net assets ÷ NAV per share"
+    return None
+
+
+def nav_premium(c):
+    if not c.is_fund():
+        return None
+    nav, price = c.info("navPrice"), c.price()
+    if isinstance(nav, (int, float)) and nav > 0 and price:
+        return price / nav - 1, f"Price vs NAV of ${nav:,.2f}"
+    return None
+
+
+def distribution_rate(c):
+    if not c.is_fund():
+        return None
+    d, today, price = divs(c), last_bar_day(c), c.price()
+    if d is None or today is None or not price or c.no_dividends():
+        return None
+    import pandas as pd
+    per_year = max(1, len(d[d.index > today - pd.Timedelta(days=365)]))
+    last = float(d.iloc[-1])
+    return last * per_year / price, f"Latest distribution ${last:,.4f} × {per_year} a year ÷ price"
+
+
+def top_sector(c):
+    f = c.funds()
+    sectors = (f or {}).get("sectors") or {}
+    if not sectors:
+        return None
+    k, w = max(sectors.items(), key=lambda kv: kv[1])
+    return SECTOR_NAMES.get(k, k.replace("_", " ").title()), f"The fund's largest sector, {w:.0%} of it"
+
+
+def fund_overview(field):
+    def fn(c):
+        f = c.funds()
+        return ((f or {}).get("overview") or {}).get(field)
+    return fn
+
+
+def fund_expense(c):
+    f = c.funds()
+    v = (f or {}).get("expense")
+    return (v, "Annual report expense ratio") if v else None
+
+
+def holdings_count(c):
+    h = c.holdings()
+    if not h or not h.get("count"):
+        return None
+    when = f", {h['as_of']}" if h.get("as_of") else ""
+    return h["count"], f"From the fund's {h.get('source')} filing{when}"
+
+
+# ---- preferreds, units, warrants and rights: company facts from the issuer's common stock
+def issuer_value(name):
+    def fn(c):
+        v = c.issuer_info(name)
+        return (v, f"From {c.issuer()}, the issuer's common stock") if v not in (None, "") else None
+    return fn
+
+
+# ---- look-through for funds
+def look(key):
+    harmonic = LOOK_KEYS[key] == "harmonic"
+
+    def fn(c):
+        if not c.is_fund():
+            return None
+        h = c.holdings()
+        if not h or not h.get("weights") or not h.get("equity"):
+            if key not in c.pending_keys:
+                f = c.lookup("funds", c.sym) or {}
+                stocks = (f.get("assets") or {}).get("stockPosition")
+                if stocks == 0 or (h and not h.get("equity")):
+                    c.look_why[key] = ("no_stocks", None)
+                elif h:
+                    c.look_why[key] = ("holdings_unavailable", "none of its stock holdings could be matched")
+                else:
+                    c.look_why[key] = ("holdings_unavailable", "no holdings listed for this fund")
+            return None
+        vals, covered, waiting = [], 0.0, False
+        for sym, w in h["weights"]:
+            child = c.child(sym)
+            if child is None:
+                waiting = True                  # still loading; ask for every holding at once
+                continue
+            v = child.v(key)
+            if isinstance(v, (int, float)) and not isinstance(v, bool) and (v > 0 or not harmonic):
+                vals.append((w, float(v)))
+                covered += w
+        if waiting:
+            return None
+        share = min(covered / h["equity"], 1.0)
+        if share < LOOK_MIN or not vals:
+            c.look_why[key] = ("holdings_unavailable", f"data for {share:.0%} of holdings")
+            return None
+        total = sum(w for w, _ in vals)
+        value = total / sum(w / v for w, v in vals) if harmonic else sum(w * v for w, v in vals) / total
+        return value, f"weighted by {share:.0%} of holdings"
+    return fn
+
+
 Y = "yahoo"
+F = "fund"
 STRATEGIES = {
     # short interest
     "shortPercentOfFloat": [(Y, I("shortPercentOfFloat")),
                             ("calculated", calc(lambda c: div(c.v("sharesShort"), c.v("floatShares")), "Shares short ÷ float"))],
-    "sharesShort": [(Y, I("sharesShort"))],
-    "sharesShortPriorMonth": [(Y, I("sharesShortPriorMonth"))],
+    "sharesShort": [(Y, I("sharesShort")), ("finra", finra("short"))],
+    "sharesShortPriorMonth": [(Y, I("sharesShortPriorMonth")), ("finra", finra("month_ago"))],
     "short_change": [("calculated", lambda c: (lambda a, b: a / b - 1 if a is not None and b else None)(
         c.v("sharesShort"), c.v("sharesShortPriorMonth")))],
-    "shortRatio": [(Y, I("shortRatio")),
+    "shortRatio": [(Y, I("shortRatio")), ("finra", finra("dtc")),
                    ("calculated", calc(lambda c: div(c.v("sharesShort"), c.v("averageVolume")),
                                        "Shares short ÷ 3-month average daily volume"))],
     "sharesPercentSharesOut": [(Y, I("sharesPercentSharesOut")),
                                ("calculated", calc(lambda c: div(c.v("sharesShort"), c.v("sharesOutstanding")),
                                                    "Shares short ÷ shares outstanding"))],
     "floatShares": [(Y, I("floatShares"))],
-    "sharesOutstanding": [(Y, I("sharesOutstanding", positive=True)),
+    "sharesOutstanding": [(Y, I("sharesOutstanding", positive=True)), (F, fund_shares),
                           ("shares", lambda c: (lambda d: (d["shares"], f"As of {d['as_of']}") if d and d.get("shares") else None)(c.source("shares"))),
                           ("sec", lambda c: c.sec("shares"))],
     "impliedSharesOutstanding": [(Y, I("impliedSharesOutstanding", positive=True)),
                                  ("calculated", calc(shares, "Same as shares outstanding"))],
     "heldPercentInsiders": [(Y, I("heldPercentInsiders")), ("holders", holder("insidersPercentHeld"))],
     "heldPercentInstitutions": [(Y, I("heldPercentInstitutions")), ("holders", holder("institutionsPercentHeld"))],
-    "dateShortInterest": [(Y, I("dateShortInterest"))],
+    "dateShortInterest": [(Y, I("dateShortInterest")), ("finra", finra("date"))],
     # price & trading
     "currentPrice": [(Y, I("currentPrice", "regularMarketPrice", positive=True)),
                      ("history", META("regularMarketPrice", positive=True)), ("history", h_last_close)],
@@ -1232,23 +1596,24 @@ STRATEGIES = {
                                           ("calculated", calc(change_vs("twoHundredDayAverage"), "(Price − 200-day average) ÷ average"))],
     "beta": [(Y, I("beta", "beta3Year")), ("history", h_beta)],
     # valuation
-    "marketCap": [(Y, I("marketCap", positive=True)),
+    "marketCap": [(Y, I("marketCap", positive=True)), (F, net_assets),
                   ("calculated", calc(lambda c: c.price() * shares(c) if c.price() and shares(c) else None,
                                       "Price × shares outstanding"))],
     "enterpriseValue": [(Y, I("enterpriseValue")),
                         ("calculated", calc(lambda c: c.v("marketCap") + c.v("totalDebt") - c.v("totalCash")
                                             if None not in (c.v("marketCap"), c.v("totalDebt"), c.v("totalCash")) else None,
                                             "Market cap + debt − cash"))],
-    "trailingPE": [(Y, I("trailingPE", positive=True)),
+    "trailingPE": [(Y, I("trailingPE", positive=True)), (F, fund_ratio("pe")),
                    ("calculated", calc(lambda c: div(c.price(), c.v("trailingEps")), "Price ÷ trailing EPS"))],
     "forwardPE": [(Y, I("forwardPE", positive=True)),
                   ("calculated", calc(lambda c: div(c.price(), c.v("forwardEps")), "Price ÷ forward EPS"))],
     "trailingPegRatio": [(Y, I("trailingPegRatio", "pegRatio", positive=True)),
                          ("calculated", calc(lambda c: div(c.v("trailingPE"), (c.v("earningsGrowth") or 0) * 100),
                                              "Trailing P/E ÷ (earnings growth × 100)"))],
-    "priceToBook": [(Y, I("priceToBook", positive=True)),
+    # a fund's own "price to book" on Yahoo compares its price with its NAV, so funds use their holdings'
+    "priceToBook": [(Y, lambda c: None if c.is_fund() else I("priceToBook", positive=True)(c)), (F, fund_ratio("pb")),
                     ("calculated", calc(lambda c: div(c.price(), c.v("bookValue")), "Price ÷ book value per share"))],
-    "priceToSalesTrailing12Months": [(Y, I("priceToSalesTrailing12Months", positive=True)),
+    "priceToSalesTrailing12Months": [(Y, I("priceToSalesTrailing12Months", positive=True)), (F, fund_ratio("ps")),
                                      ("calculated", calc(lambda c: div(c.v("marketCap"), c.v("totalRevenue")),
                                                          "Market cap ÷ revenue"))],
     "enterpriseToRevenue": [(Y, I("enterpriseToRevenue")),
@@ -1257,12 +1622,13 @@ STRATEGIES = {
     "enterpriseToEbitda": [(Y, I("enterpriseToEbitda")),
                            ("calculated", calc(lambda c: div(c.v("enterpriseValue"), c.v("ebitda")),
                                                "Enterprise value ÷ EBITDA"))],
-    "bookValue": [(Y, I("bookValue")),
+    "bookValue": [(Y, lambda c: None if c.is_fund() else I("bookValue")(c)),
                   ("statements", lambda c: (lambda e: (e[0] / shares(c), e[1]) if e and shares(c) else None)(
                       latest_bs("Stockholders Equity", "Common Stock Equity")(c)))],
     "trailingEps": [(Y, I("trailingEps")), ("statements", ttm("Diluted EPS", "Basic EPS"))],
     "forwardEps": [(Y, I("forwardEps")), ("analysts", estimate("+1y"))],
     "epsCurrentYear": [(Y, I("epsCurrentYear")), ("analysts", estimate("0y"))],
+    "nav_premium": [(F, nav_premium)],
     # profitability
     "grossMargins": [(Y, I("grossMargins", nonzero=True)),
                      ("calculated", calc(lambda c: div(c.v("grossProfits"), c.v("totalRevenue")), "Gross profit ÷ revenue"))],
@@ -1311,8 +1677,9 @@ STRATEGIES = {
     "quickRatio": [(Y, I("quickRatio")), ("statements", quick)],
     # dividends
     "dividendRate": [(Y, I("dividendRate", positive=True)), ("dividends", forward_dividend)],
-    "yield_calc": [(Y, lambda c: c.info("yield") if c.is_fund() and c.info("yield") else None),
+    "yield_calc": [(F, lambda c: c.info("yield") if c.is_fund() and c.info("yield") else None),
                    ("calculated", lambda c: div(c.v("dividendRate"), c.price()))],
+    "distribution_rate": [(F, distribution_rate)],
     "trailingAnnualDividendRate": [(Y, I("trailingAnnualDividendRate", positive=True)), ("dividends", trailing_dividends)],
     "trailingAnnualDividendYield": [(Y, I("trailingAnnualDividendYield", positive=True)),
                                     ("calculated", calc(lambda c: div(c.v("trailingAnnualDividendRate"), c.price()),
@@ -1327,7 +1694,8 @@ STRATEGIES = {
     "lastDividendValue": [(Y, I("lastDividendValue", positive=True)), ("dividends", last_div("value"))],
     "lastDividendDate": [(Y, I("lastDividendDate")), ("dividends", last_div("date"))],
     # analysts
-    "recommendationKey": [(Y, I("recommendationKey")), ("calculated", rating("key"))],
+    "recommendationKey": [(Y, lambda c: (lambda v: None if str(v).lower() == "none" else v)(c.info("recommendationKey"))),
+                          ("calculated", rating("key"))],                       # Yahoo writes "none" for no rating
     "recommendationMean": [(Y, I("recommendationMean")), ("analysts", rec_mean)],
     "averageAnalystRating": [(Y, I("averageAnalystRating")), ("calculated", rating("label"))],
     "numberOfAnalystOpinions": [(Y, I("numberOfAnalystOpinions", positive=True)),
@@ -1351,8 +1719,8 @@ STRATEGIES = {
                                     if c.hist() else None)],
     # company
     "longName": [(Y, I("longName", "shortName")), ("history", META("longName")), ("history", META("shortName"))],
-    "sector": [(Y, I("sector")), (Y, fund_info("category"))],
-    "industry": [(Y, I("industry")), (Y, fund_info("fundFamily"))],
+    "sector": [(Y, I("sector")), (F, top_sector)],
+    "industry": [(Y, I("industry"))],
     "country": [(Y, I("country"))],
     "city": [(Y, I("city"))],
     "fullTimeEmployees": [(Y, I("fullTimeEmployees", positive=True))],
@@ -1360,46 +1728,103 @@ STRATEGIES = {
     "quoteType": [(Y, I("quoteType")), ("history", META("instrumentType"))],
     "currency": [(Y, I("currency")), ("history", META("currency"))],
     "website": [(Y, I("website"))],
+    "fundFamily": [(F, fund_info("fundFamily")), (F, fund_overview("family"))],
+    "category": [(F, fund_info("category")), (F, fund_overview("categoryName"))],
+    "fundInceptionDate": [(F, fund_info("fundInceptionDate"))],
+    "expenseRatio": [(F, fund_info("netExpenseRatio")), (F, fund_expense)],
+    "netAssets": [(F, fund_info("totalAssets", "netAssets"))],
+    "holdingsCount": [(F, holdings_count)],
     # governance (ISS via Yahoo only)
     **{k: [(Y, I(k))] for k in ("overallRisk", "auditRisk", "boardRisk", "compensationRisk", "shareHolderRightsRisk")},
     # performance (always calculated from history)
     **{k: [("history", perf(k))] for k in PERF_KEYS},
 }
+for _k in ISSUER_KEYS:                   # right after Yahoo's own value
+    _at = 1 + max(i for i, (s, _) in enumerate(STRATEGIES[_k]) if s == Y)
+    STRATEGIES[_k].insert(_at, ("issuer", issuer_value(_k)))
+for _k in LOOK_KEYS:                     # last: only funds get this far
+    STRATEGIES[_k].append(("lookthrough", look(_k)))
 assert set(STRATEGIES) == set(YAHOO_KEYS), set(YAHOO_KEYS) ^ set(STRATEGIES)
 
 
 # ------------------------------- service -----------------------------------
 class MetricService:
     """Fetches the sources each tab needs in the background, caches them for every
-    visitor, and works out values, sources and reasons per ticker."""
+    visitor, and works out values, sources and reasons per ticker.
 
-    def __init__(self, yf, sec_client=None, sec_enabled=False):
+    The open tab's fetches run first (6 workers); prefetching other tabs runs on 2
+    more workers and only while Yahoo's rate limit has room to spare, so it never
+    slows down what a visitor is looking at.
+
+    ibkr(sym) gives IBKR's entry for a ticker (name, ISIN), for Yahoo and FINRA
+    lookups. holdings(sym) gives a fund's look-through weights (etf.EtfService);
+    without it, Yahoo's top 10 holdings are used.
+    """
+
+    def __init__(self, yf, sec_client=None, sec_enabled=False, symbols=None, ibkr=None, holdings=None, finra=None):
         self.yf = yf
         self.sec_enabled = bool(sec_enabled and sec_client)
         self.secfacts = SecFacts(sec_client, self.sec_enabled) if sec_client else None
+        self.symbols = symbols
+        self.ibkr = ibkr or (lambda s: None)
+        self.holdings, self.finra = holdings, finra
         self.lock = threading.Lock()
-        self.cache = {s: LRU(CACHE_LIMITS.get(s, 400)) for s in TTL}
-        self.inflight = {}
+        self.cache = {s: LRU(CACHE_LIMITS.get(s, 600)) for s in TTL}
+        self.inflight = {}                    # (source, sym) -> (future, priority)
+        self.verifying = set()
+        self.fg_waiting = 0                   # open-tab fetches queued or running
         self.pool = ThreadPoolExecutor(max_workers=6)
+        self.bg = ThreadPoolExecutor(max_workers=2)
         self.fetchers = {"info": fetch_info, "hist": fetch_hist, "intraday": fetch_intraday,
-                         "statements": fetch_statements, "analysts": fetch_analysts, "holders": fetch_holders,
-                         "calendar": fetch_calendar, "shares": fetch_shares}
+                         **{f"stmt_{p}": fetch_statement(p) for p in STATEMENT_PARTS},
+                         "analysts": fetch_analysts, "holders": fetch_holders,
+                         "calendar": fetch_calendar, "shares": fetch_shares, "funds": fetch_funds}
+
+    def _symbols(self):
+        return self.symbols or common.SYMBOLS
+
+    def _entry(self, sym):
+        try:
+            return self.ibkr(sym) or {}
+        except Exception:
+            return {}
 
     def _fetch(self, source, sym):
         if source == "sec":
             return self.secfacts.fetch(sym)
-        return self.fetchers[source](self.yf, sym)
+        if source == "fundhold":
+            return self.holdings(sym) if self.holdings else {"_error": "No holdings service"}
+        res = self._symbols().resolve(sym, self._entry(sym).get("isin"))
+        if res.yahoo is None:
+            return {"_error": listing_message(res) or "Not on Yahoo Finance", "nodata": True}
+        return self.fetchers[source](self.yf, res.yahoo)
 
-    def _run(self, source, sym):
+    def _reserve(self):
+        """Slots prefetching leaves free: a share of the budget while a visitor's open tab has work queued."""
+        return int(YAHOO.per_minute * PREFETCH_SHARE) if self.fg_waiting else 0
+
+    def _run(self, source, sym, prio):
+        set_call_reserve(self._reserve if prio == PREFETCH else 0)
         try:
             data = self._fetch(source, sym)
         except YahooBusy:
-            data = {"_error": "busy"}
+            data = {"_error": "busy", "busy": True}
         except Exception as e:
-            data = {"_error": "rate limited" if is_rate_limit(e) else f"failed ({type(e).__name__})"}
+            if is_rate_limit(e):
+                data = {"_error": "rate limited", "busy": True}
+            elif NO_DATA_RE.search(str(e)):        # Yahoo answered: it has nothing of this kind for the ticker
+                data = {"_error": "Yahoo has no data of this kind for this ticker", "nodata": True}
+            else:
+                data = {"_error": f"failed ({type(e).__name__})"}
+        finally:
+            set_call_reserve(0)
         with self.lock:
-            self.cache[source][sym] = (time.time(), data)
+            # a prefetch that found no spare capacity leaves nothing behind: the open tab fetches it fresh
+            if data is not None and not (prio == PREFETCH and data.get("busy")):
+                self.cache[source][sym] = (time.time(), data)
             self.inflight.pop((source, sym), None)
+            if prio == FOREGROUND:
+                self.fg_waiting -= 1
 
     def _lookup(self, source, sym):
         with self.lock:
@@ -1407,57 +1832,93 @@ class MetricService:
         if not hit:
             return None, True
         ts, data = hit
-        max_age = ERROR_MAX_AGE if "_error" in data else TTL[source]
+        max_age = (BUSY_MAX_AGE if data.get("busy") else ERROR_MAX_AGE) if "_error" in data else TTL[source]
         return data, time.time() - ts > max_age
 
-    def _ensure(self, source, sym):
+    def _peek(self, source, sym):
+        return self._lookup(source, sym)[0]
+
+    def _ensure(self, source, sym, prio=FOREGROUND):
         """Start a fetch when the cached copy is missing or stale. Returns a future
-        only when there's nothing cached to show meanwhile."""
+        only when there's nothing cached to show meanwhile. A visitor's request takes
+        over a queued prefetch of the same thing."""
         data, stale = self._lookup(source, sym)
         if not stale:
             return None
         with self.lock:
-            fut = self.inflight.get((source, sym))
-            if fut is None:
-                fut = self.pool.submit(self._run, source, sym)
-                self.inflight[(source, sym)] = fut
+            hit = self.inflight.get((source, sym))
+            if hit and prio == FOREGROUND and hit[1] == PREFETCH and hit[0].cancel():
+                hit = None
+            if hit is None:
+                pool = self.pool if prio == FOREGROUND else self.bg
+                if prio == FOREGROUND:
+                    self.fg_waiting += 1
+                fut = pool.submit(self._run, source, sym, prio)
+                self.inflight[(source, sym)] = (fut, prio)
+            else:
+                fut = hit[0]
         return fut if data is None else None
 
-    def _sources(self, sym):
-        out = {}
-        for source in TTL:
-            data, _ = self._lookup(source, sym)
-            if data is not None:
-                out[source] = data
-        return out
+    def forget(self, sym, errors_only=False):
+        """Drop a ticker's cached sources (all of them, or just failed ones), so they're fetched again."""
+        with self.lock:
+            for source, cache in self.cache.items():
+                hit = cache.get(sym)
+                if hit and (not errors_only or "_error" in hit[1]):
+                    cache.pop(sym)
 
-    def _resolve(self, sym, keys):
-        spy, _ = self._lookup("hist", "SPY")
-        ctx = Ctx(sym, self._sources(sym), spy=spy, sec_enabled=self.sec_enabled)
-        row = ctx.resolve(keys)
-        return ctx, row
+    def _verify(self, sym, isin):
+        """Yahoo had nothing under a plain ticker: check it, and try its ISIN."""
+        try:
+            res = self._symbols().resolve_many([sym], {sym: isin}, verify={sym})[sym]
+            if res.yahoo and res.yahoo != sym:
+                self.forget(sym)              # fetched under the wrong name before
+        finally:
+            with self.lock:
+                self.verifying.discard(sym)
 
-    def get(self, symbols, keys):
+    def _start_verify(self, sym, isin):
+        with self.lock:
+            if sym in self.verifying:
+                return
+            self.verifying.add(sym)
+        self.pool.submit(self._verify, sym, isin)
+
+    def _resolve(self, sym, keys, entry):
+        ctx = Ctx(sym, self._peek, sec_enabled=self.sec_enabled, finra=self.finra, ibkr=entry,
+                  holdings_service=self.holdings is not None)
+        return ctx, ctx.resolve(keys)
+
+    def busy_for(self):
+        """Seconds until Yahoo calls resume after a "too many requests" answer (0 if not paused)."""
+        return int(math.ceil(YAHOO.pause_left()))
+
+    def get(self, symbols, keys, prefetch=False, retry=()):
+        """Rows of values, sources and reasons for these tickers, waiting up to WAIT_SEC
+        for missing sources. With prefetch, the fetches use only spare Yahoo capacity."""
         keys = [k for k in dict.fromkeys(keys) if k in STRATEGIES]
+        prio = PREFETCH if prefetch else FOREGROUND
+        for s in retry:
+            self.forget(s, errors_only=True)
+        entries = {s: self._entry(s) for s in symbols}
+        spell = self._symbols().resolve_many(symbols, {s: e.get("isin") for s, e in entries.items()})
+        live = [s for s in symbols if spell[s].yahoo is not None]
+        if self.finra is not None and any(k in SHORT_REPORT_KEYS for k in keys):
+            self.finra.ensure()
         t0 = time.time()
-        futs = []
-        for s in symbols:
-            futs += [self._ensure("info", s), self._ensure("hist", s)]
-        futs = [f for f in futs if f is not None]
+        futs = [f for s in live for f in (self._ensure("info", s, prio), self._ensure("hist", s, prio)) if f]
         if futs:
             wait(futs, timeout=WAIT_SEC)
 
         results = {}
-        for _ in range(3):
+        for _ in range(ROUNDS):
             futs = []
-            for s in symbols:
-                ctx, row = self._resolve(s, keys)
+            for s in live:
+                ctx, row = self._resolve(s, keys, entries[s])
                 results[s] = (ctx, row)
-                for source in ctx.used | ctx.needs:
-                    if source == "spy":
-                        futs.append(self._ensure("hist", "SPY"))
-                    elif source in TTL:
-                        futs.append(self._ensure(source, s))
+                for name, s2 in ctx.used | ctx.needs:
+                    if name in TTL:
+                        futs.append(self._ensure(name, s2, prio))
             futs = [f for f in futs if f is not None]
             remaining = WAIT_SEC - (time.time() - t0)
             if not futs or remaining < 0.5:
@@ -1466,13 +1927,25 @@ class MetricService:
 
         rows, pending = [], 0
         for s in symbols:
+            res = spell[s]
+            if res.yahoo is None:
+                rows.append({"symbol": s, "yahoo": None, "data": {}, "src": {}, "why": {}, "note": {}, "loading": [],
+                             "pending": False, "error": listing_message(res), "error_kind": "listing"})
+                continue
             ctx, row = results[s]
-            info, hist = ctx.sources.get("info") or {}, ctx.sources.get("hist") or {}
-            error = None
+            error, kind = None, None
+            info, hist = self._peek("info", s) or {}, self._peek("hist", s) or {}
             if not row["data"] and "_error" in hist and info and (info.get("empty") or "_error" in info):
-                error = ("Yahoo has no data for this ticker" if info.get("empty")
-                         else "Couldn't reach Yahoo just now")
+                if info.get("empty") and hist.get("nodata"):
+                    if res.how in ("same", "unchecked") and not prefetch:
+                        self._start_verify(s, entries[s].get("isin"))
+                        row = dict(row, loading=list(keys), why={}, note={})
+                    else:
+                        error, kind = f"Yahoo Finance lists {res.yahoo} but has no data for it", "none"
+                else:
+                    error, kind = "Couldn't reach Yahoo just now", "temp"
             loading = bool(row["loading"])
             pending += loading
-            rows.append({"symbol": s, **row, "pending": loading, "error": error})
+            rows.append({"symbol": s, "yahoo": res.yahoo, **row, "pending": loading, "error": error,
+                         "error_kind": kind})
         return rows, pending

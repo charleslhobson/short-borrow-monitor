@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<link rel="icon" href="data:,">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Short borrow monitor</title>
 <meta name="description" content="Borrow fees and shares available to short for US stocks, from Interactive Brokers' public stock loan data.">
@@ -164,9 +165,10 @@
 
   /* ---------- tabs ---------- */
   .tabbar {
-    display: flex; align-items: flex-end; gap: 4px; margin: 4px 0 0;
-    border-bottom: 1px solid var(--rule); overflow-x: auto; scrollbar-width: thin;
+    display: flex; flex-wrap: wrap; align-items: flex-end; gap: 4px; margin: 4px 0 0;
+    border-bottom: 1px solid var(--rule);
   }
+  #tablist { flex-wrap: wrap; min-width: 0; }   /* many tabs wrap onto a second line instead of hiding */
   .tab {
     flex: none; background: none; border: 1px solid transparent; border-bottom: 0;
     color: var(--muted); padding: 10px 16px; border-radius: 8px 8px 0 0;
@@ -192,6 +194,12 @@
   .loading { color: var(--muted); }
   #metricTable td.calc { text-decoration: underline dotted; text-decoration-color: var(--muted); text-underline-offset: 3px; }
   #metricTable td.why { color: var(--muted); cursor: help; }
+  #metricTable td.why.na { font-size: 12px; letter-spacing: .02em; opacity: .8; }
+  #metricTable td.why.temp { color: var(--heat-2); font-style: italic; font-size: 13px; }
+  #metricTable td.fund::after { content: "f"; font-style: italic; font-size: 10px; vertical-align: super; margin-left: 2px; color: var(--muted); }
+  #metricTable td.rowmsg { color: var(--muted); font-style: italic; text-align: left; white-space: normal; min-width: 220px; }
+  .retry { background: none; border: 0; padding: 0 0 0 6px; color: var(--focus); font-size: 12px; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+  .coverage { color: var(--muted); font-size: 13px; margin: -4px 0 10px; min-height: 1.2em; }
 
   /* ---------- dialog ---------- */
   dialog {
@@ -339,6 +347,7 @@
           <button class="quiet" id="removeTabBtn" type="button">Remove tab</button>
         </div>
       </div>
+      <p class="coverage" id="metricCoverage" aria-live="polite"></p>
       <div class="tablewrap">
         <table id="metricTable">
           <thead id="metricHead"></thead>
@@ -354,7 +363,7 @@
 
   <footer>
     <p><strong>Availability:</strong> Available means 10,000 or more shares to lend. Limited means fewer than 10,000. None means no shares to lend right now, so a new short isn't possible.</p>
-    <p>Borrow fees, rebates and share counts come from Interactive Brokers' public stock loan file and refresh about every 15 minutes. Fees are yearly rates, charged daily. <span id="priceSource">Prices and all other metrics come from Yahoo Finance and may be delayed. When Yahoo's main quote data leaves a value out, it's worked out from Yahoo's price history, financial statements, dividend and split history, analyst data or earnings calendar (or SEC filings), and shown with a dotted underline; hover a cell to see where a value came from. A blank cell says why: <em>n/a</em> doesn't apply (for example P/E for a fund), <em>none</em> means there isn't one (no dividend, no splits, no analyst coverage), <em>closed</em> means no live quote outside market hours, and <em>–</em> means no source has it. Quotes refresh every 15 minutes, price history every 30, financial statements and analyst data every 12 hours.</span></p>
+    <p>Borrow fees, rebates and share counts come from Interactive Brokers' public stock loan file and refresh about every 15 minutes. Fees are yearly rates, charged daily. <span id="priceSource">Prices and all other metrics come from Yahoo Finance and may be delayed. When Yahoo's main quote data leaves a value out, it's worked out from Yahoo's price history, financial statements, dividend and split history, analyst data or earnings calendar, SEC filings, or FINRA's short interest file, and shown with a dotted underline; hover a cell to see where a value came from. Preferreds and units take company facts (sector, governance, margins) from the issuer's common stock. For funds, a small <em>f</em> marks a fund equivalent from Yahoo's fund data (P/E of the holdings, net assets for market cap), and <em>look-through</em> values average the fund's biggest holdings by weight (shown only when they cover at least 30% of the fund). A blank cell says why: <em>n/a</em> doesn't apply (EPS for a fund, a dividend yield for a company that pays none), <em>–</em> means Yahoo has none (no analyst coverage, no ISS rating), and <em>retrying…</em> means Yahoo was busy or unreachable and the site is trying again. Tickers Yahoo doesn't carry (old or renamed IBKR listings) get one message for the whole row. Quotes refresh every 15 minutes, price history every 30, financial statements and analyst data every 12 hours.</span></p>
     <p>For information only. Not investment advice. The rate you're charged by your broker may differ.</p>
   </footer>
 </div>
@@ -388,7 +397,7 @@
   </form>
 </dialog>
 <script src="/static/uPlot.iife.min.js?v=1.6.30"></script>
-<script src="/static/borrow-chart.js?v=1"></script>
+<script src="/static/borrow-chart.js?v=2"></script>
 <script>
 const $ = (id) => document.getElementById(id);
 const STORE_KEY = "sbm.tickers.v1";
@@ -410,9 +419,14 @@ const detailRows = new Map();     // symbol -> {tr, ctl}: the open history row a
 
 let tabs = [];                    // [{id, name, preset, metrics: [keys]}]
 let activeTab = "borrow";
-let metricRows = new Map();       // symbol -> {data, pending, error}
+let metricRows = new Map();       // symbol -> {data, src, why, note, loading, error, error_kind, yahoo}
 let mSortKey = null, mSortDir = 1;
 let metricTimer = null;
+const stuck = new Map();          // symbol -> {sig, polls}: rows still loading with nothing new
+const STUCK_POLLS = 5;            // ~20 seconds of polls with no progress -> "temporarily unavailable"
+let busySecs = 0;                 // Yahoo answered "too many requests": seconds until calls resume
+let prefetchTimer = null;
+const prefetched = new Map();     // tab id -> time its columns were last fetched ahead
 
 // ---------- formatting ----------
 const fmt2 = (v) => v == null ? "–" : v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -584,6 +598,7 @@ function renderWatch() {
     const nm = document.createElement("span");
     tickerCell(nm, r.symbol, r.name);
     nm.className = "";
+    if (yahooTitle(r)) btn.title = `Borrow fee history. ${yahooTitle(r)}`;
     btn.append(chev, nm);
     btn.addEventListener("click", () => toggleHistory(r.symbol));
     symTd.append(btn);
@@ -595,6 +610,7 @@ function renderWatch() {
     } else {
       if (config.prices_enabled) {
         const p = td(); p.className = "price"; p.textContent = fmt2(r.price);
+        if (r.price == null && r.yahoo_note) { p.className = "price dim"; p.title = r.yahoo_note; }
         const c = td();
         c.textContent = r.change == null ? "–" : `${r.change > 0 ? "+" : ""}${r.change.toFixed(2)}%`;
         c.className = r.change > 0 ? "pos" : r.change < 0 ? "neg" : "dim";
@@ -633,12 +649,32 @@ async function refreshWatch() {
     const res = await fetch(`/api/quotes?symbols=${encodeURIComponent(tickers.join(","))}`, { cache: "no-store" });
     const d = await res.json();
     rows = d.rows;
+    adoptSpellings(rows);
     setStatus(d.borrow);
   } catch {
     setStatus({ state: "error", text: "Can't reach the server. Retrying." });
   }
   renderWatch();
   if (activeTab !== "borrow") renderMetricBody();
+  else schedulePrefetch();
+}
+
+// A ticker typed in Yahoo's style (BRK-B, BAC-PD, AAC-UN) is kept in IBKR's spelling (BRK.B, BAC.PRD, AAC.U).
+function adoptSpellings(list) {
+  let changed = false;
+  for (const r of list || []) {
+    if (!r.typed || r.typed === r.symbol) continue;
+    const i = tickers.indexOf(r.typed);
+    if (i < 0) continue;
+    if (tickers.includes(r.symbol)) tickers.splice(i, 1); else tickers[i] = r.symbol;
+    changed = true;
+  }
+  if (changed) saveTickers();
+}
+function yahooTitle(r) {
+  if (!r) return "";
+  if (r.yahoo_note) return r.yahoo_note;
+  return r.yahoo && r.yahoo !== r.symbol ? `Yahoo Finance ticker: ${r.yahoo}` : "";
 }
 
 function addTickers(text) {
@@ -647,6 +683,7 @@ function addTickers(text) {
   let msg = "";
   for (const s of good) if (!tickers.includes(s)) tickers.push(s);
   if (tickers.length > 30) { tickers = tickers.slice(0, 30); msg = "Your list can hold up to 30 tickers."; }
+  prefetched.clear();
   saveTickers(); renderWatch(); refreshWatch();
   if (activeTab !== "borrow") { renderMetricBody(); refreshMetrics(); }
   return msg;
@@ -729,7 +766,10 @@ function selectTab(id) {
   $("panel-borrow").hidden = !isBorrow;
   $("panel-metric").hidden = isBorrow;
   clearTimeout(metricTimer);
-  if (!isBorrow) {
+  clearTimeout(prefetchTimer);
+  stuck.clear();
+  if (isBorrow) schedulePrefetch();
+  else {
     $("panel-metric").setAttribute("aria-labelledby", "tab-" + id);
     mSortKey = null;
     renderMetricHead();
@@ -747,10 +787,20 @@ function borrowValue(sym, key) {
   return { ibkr_fee: r.fee, ibkr_rebate: r.rebate, ibkr_shares: r.shares, ibkr_avail: r.availability }[key];
 }
 // One metric cell: {value, src, note} when there's a value, {why, note} when there isn't, {loading} while it loads.
-const LOCAL_REASONS = { no_ibkr: ["–", "Not in IBKR's borrow file"], no_data: ["–", "No data"] };
-function reasonOf(code) { return reasons[code] || LOCAL_REASONS[code] || LOCAL_REASONS.no_data; }
+// Reasons come in three kinds: na (doesn't apply) "n/a", none (Yahoo has none) "–", temp (temporarily unavailable) "retrying…".
+const LOCAL_REASONS = {
+  no_ibkr: ["none", "Not in IBKR's borrow file", "not in IBKR's file"],
+  no_data: ["none", "No data", "no data"],
+  stuck: ["temp", "Temporarily unavailable: still waiting on Yahoo", "temporarily unavailable"],
+};
+const CELL_WORD = { na: "n/a", none: "–", temp: "retrying…" };
+function reasonOf(code) {
+  const r = reasons[code] || LOCAL_REASONS[code] || LOCAL_REASONS.no_data;
+  return { kind: r[0], text: r[1], short: r[2] || r[1] };
+}
 function sourceLabel(src) { return src === "ibkr" ? "Interactive Brokers" : (sources[src] || [""])[0]; }
 function isCalculated(key, src) { return !!(sources[src] && sources[src][1]) && !alwaysCalc.has(key); }
+function isStuck(sym) { const s = stuck.get(sym); return !!s && s.polls >= STUCK_POLLS; }
 function cellInfo(sym, key) {
   if (key.startsWith("ibkr_")) {
     const r = rows.find(x => x.symbol === sym);
@@ -760,14 +810,26 @@ function cellInfo(sym, key) {
     return v == null ? { why: "no_data" } : { value: v, src: "ibkr" };
   }
   const m = metricRows.get(sym);
-  if (!m || (m.loading || []).includes(key)) return { loading: true };
+  if (!m) return isStuck(sym) ? { why: "stuck" } : { loading: true };
+  if (m.error) return { row: true };
+  if ((m.loading || []).includes(key)) return isStuck(sym) ? { why: "stuck" } : { loading: true };
   const d = m.data || {};
   if (d[key] != null) return { value: d[key], src: (m.src || {})[key], note: (m.note || {})[key] };
-  return { why: (m.why || {})[key] || "no_data", note: (m.note || {})[key] };
+  const why = (m.why || {})[key];
+  if (why) return { why, note: (m.note || {})[key] };
+  return isStuck(sym) ? { why: "stuck" } : { loading: true };    // the last answer was for another tab's columns
 }
 function valueFor(sym, key) {
   const c = cellInfo(sym, key);
   return c.value === undefined ? null : c.value;
+}
+// A row needs a retry link when Yahoo was busy or unreachable for it, or it's stuck loading.
+function needsRetry(sym, tab) {
+  const m = metricRows.get(sym);
+  if (isStuck(sym)) return true;
+  if (!m) return false;
+  if (m.error) return m.error_kind === "temp";
+  return tab.metrics.some(k => { const c = cellInfo(sym, k); return c.why && reasonOf(c.why).kind === "temp"; });
 }
 
 function renderMetricHead() {
@@ -795,6 +857,11 @@ function renderMetricHead() {
   }
 }
 
+function rowMessage(m) {
+  if (m.error_kind === "temp") return `${m.error}. Trying again shortly.`;
+  return m.error.endsWith(".") ? m.error : m.error + ".";
+}
+
 function renderMetricBody() {
   const tab = currentTab();
   const body = $("metricBody");
@@ -810,71 +877,162 @@ function renderMetricBody() {
   });
   if (mSortKey) list = sorted(list, mSortKey, mSortDir);
 
-  const onlyBorrow = tab.metrics.every(k => k.startsWith("ibkr_"));
   for (const r of list) {
     const tr = body.insertRow();
     const info = metricRows.get(r.symbol);
     const quote = rows.find(x => x.symbol === r.symbol);
     const name = (info && info.data && info.data.longName) || (quote && quote.name);
-    tickerCell(tr.insertCell(), r.symbol, name);
-
-    if (!onlyBorrow && info && info.error) {
-      const td = tr.insertCell(); td.colSpan = tab.metrics.length; td.className = "note";
-      td.textContent = info.error === "Yahoo has no data for this ticker"
-        ? "Yahoo Finance has no data for this ticker." : info.error + ". Trying again shortly.";
-      continue;
+    const symTd = tr.insertCell();
+    tickerCell(symTd, r.symbol, name);
+    const yt = info && info.yahoo && info.yahoo !== r.symbol ? `Yahoo Finance ticker: ${info.yahoo}` : yahooTitle(quote);
+    if (yt) symTd.title = yt;
+    if (needsRetry(r.symbol, tab)) {
+      const b = document.createElement("button");
+      b.type = "button"; b.className = "retry"; b.textContent = "Retry";
+      b.setAttribute("aria-label", `Retry loading ${r.symbol}`);
+      b.addEventListener("click", () => retryRow(r.symbol));
+      symTd.querySelector(".ticker").after(b);
     }
-    for (const k of tab.metrics) {
+
+    // Tickers Yahoo doesn't carry: one message across the Yahoo columns; IBKR's columns still show.
+    const rowError = info && info.error ? rowMessage(info) : null;
+    let said = false;
+    for (let i = 0; i < tab.metrics.length; i++) {
+      const k = tab.metrics[i];
+      if (rowError && !k.startsWith("ibkr_")) {
+        let j = i;
+        while (j + 1 < tab.metrics.length && !tab.metrics[j + 1].startsWith("ibkr_")) j++;
+        const td = tr.insertCell();
+        td.colSpan = j - i + 1; td.className = "rowmsg"; td.title = rowError;
+        td.textContent = said ? "" : rowError;
+        said = true; i = j;
+        continue;
+      }
       const m = metricByKey.get(k);
       const td = tr.insertCell();
       const c = cellInfo(r.symbol, k);
       if (m.fmt === "text") td.style.textAlign = "left";
       if (c.loading) { td.textContent = "…"; td.className = "loading"; td.title = "Loading"; continue; }
-      if (c.value == null) {                     // no value: a short word, the reason on hover
-        const [word, text] = reasonOf(c.why);
-        td.textContent = word;
-        td.className = "dim why";
-        td.title = c.note ? `${text} (${c.note})` : text;
+      if (c.value == null) {                     // no value: a short word by kind, the reason on hover
+        const why = reasonOf(c.why);
+        td.textContent = CELL_WORD[why.kind] || "–";
+        td.className = `dim why ${why.kind}`;
+        td.title = c.note ? `${why.text} (${c.note})` : why.text;
         continue;
       }
       if (m.fmt === "avail") { chip(td, c.value); continue; }
       const f = formatMetric(m, c.value);
       td.textContent = f.text;
-      td.className = [f.cls || "", f.wrap ? "wrap" : "", isCalculated(k, c.src) ? "calc" : ""].join(" ").trim();
-      td.title = [sourceLabel(c.src), c.note].filter(Boolean).join(": ");
+      td.className = [f.cls || "", f.wrap ? "wrap" : "", isCalculated(k, c.src) ? "calc" : "",
+                      c.src === "fund" ? "fund" : ""].join(" ").trim();
+      td.title = [sourceLabel(c.src), c.note].filter(Boolean).join(c.src === "finra" ? ", " : ": ");
     }
+  }
+  renderCoverage(tab);
+}
+
+// "312 of 360 cells filled · 36 don't apply to funds · 12 not on Yahoo"
+function renderCoverage(tab) {
+  const el = $("metricCoverage");
+  if (!tab || !tickers.length) { el.textContent = ""; return; }
+  let filled = 0, total = 0;
+  const groups = new Map();
+  const add = (label) => groups.set(label, (groups.get(label) || 0) + 1);
+  for (const s of tickers) {
+    const m = metricRows.get(s);
+    for (const k of tab.metrics) {
+      total++;
+      const c = cellInfo(s, k);
+      if (c.value != null) filled++;
+      else if (c.row) add(m.error_kind === "listing" ? "not on Yahoo" : m.error_kind === "temp" ? "retrying" : "Yahoo has none");
+      else if (c.loading) add("loading");
+      else add(reasonOf(c.why).short);
+    }
+  }
+  const parts = [...groups.entries()].sort((a, b) => b[1] - a[1]).map(([label, n]) => `${n} ${label}`);
+  el.textContent = [`${filled} of ${total} cells filled`, ...parts].join(" · ");
+}
+
+function trackProgress(list) {
+  for (const r of list) {
+    if (!r.pending) { stuck.delete(r.symbol); continue; }
+    const sig = (r.loading || []).join(",");
+    const s = stuck.get(r.symbol);
+    if (s && s.sig === sig) s.polls++; else stuck.set(r.symbol, { sig, polls: 1 });
   }
 }
 
-async function refreshMetrics() {
+async function retryRow(sym) {
+  stuck.delete(sym);
+  const m = metricRows.get(sym);
+  if (m) { m.error = null; m.loading = currentTab() ? currentTab().metrics.filter(k => !k.startsWith("ibkr_")) : []; }
+  renderMetricBody();
+  refreshMetrics(sym);
+}
+
+async function refreshMetrics(retrySym) {
   clearTimeout(metricTimer);
+  clearTimeout(prefetchTimer);
   const tab = currentTab();
   if (!tab) return;
   const yahooKeys = tab.metrics.filter(k => !k.startsWith("ibkr_"));
   if (!yahooKeys.length || !tickers.length) {
     $("metricHint").textContent = "From Interactive Brokers' stock loan file.";
     renderMetricBody();
+    schedulePrefetch();
     return;
   }
   const missing = tickers.filter(s => !metricRows.has(s)).length;
   if (missing) $("metricHint").textContent = `Loading ${missing} stock${missing > 1 ? "s" : ""} from Yahoo Finance…`;
   let pending = 0;
   try {
-    const url = `/api/metrics?symbols=${encodeURIComponent(tickers.join(","))}&keys=${encodeURIComponent(yahooKeys.join(","))}`;
+    const retry = typeof retrySym === "string" ? `&retry=${encodeURIComponent(retrySym)}` : "";
+    const url = `/api/metrics?symbols=${encodeURIComponent(tickers.join(","))}&keys=${encodeURIComponent(yahooKeys.join(","))}${retry}`;
     const d = await (await fetch(url, { cache: "no-store" })).json();
+    adoptSpellings(d.rows);
     for (const r of d.rows) metricRows.set(r.symbol, r);
+    trackProgress(d.rows);
     pending = d.pending;
-    $("metricHint").textContent = pending
-      ? `Still loading ${pending} stock${pending > 1 ? "s" : ""} from Yahoo Finance…`
-      : "From Yahoo Finance; values may be delayed. Dotted underline = calculated here. Hover a cell for its source or why it's blank.";
+    busySecs = d.busy || 0;
+    const waiting = d.rows.filter(r => r.pending && !isStuck(r.symbol)).length;
+    $("metricHint").textContent = busySecs
+      ? `Yahoo is busy; retrying in ${busySecs} s`
+      : waiting
+        ? `Still loading ${waiting} stock${waiting > 1 ? "s" : ""} from Yahoo Finance…`
+        : "From Yahoo Finance; values may be delayed. Dotted underline = calculated here, f = fund equivalent. Hover a cell for its source or why it's blank.";
   } catch {
     $("metricHint").textContent = "Can't reach the server. Retrying.";
     pending = 1;
   }
   if (activeTab === tab.id) {
     renderMetricBody();
-    metricTimer = setTimeout(refreshMetrics, pending ? 4000 : 60000);
+    metricTimer = setTimeout(refreshMetrics, pending ? (busySecs ? Math.min(busySecs, 30) * 1000 : 4000) : 60000);
+    if (!pending) schedulePrefetch();
   }
+}
+
+// While the open tab has everything, fetch the other tabs' columns ahead (the server uses only
+// Yahoo capacity to spare), so switching tabs is instant. Each tab is refreshed at most every 10 minutes.
+function schedulePrefetch(delay = 1500) {
+  clearTimeout(prefetchTimer);
+  if (!tickers.length || !config.prices_enabled) return;
+  prefetchTimer = setTimeout(prefetchNext, delay);
+}
+async function prefetchNext() {
+  const now = Date.now();
+  const due = tabs.filter(t => t.id !== activeTab && (now - (prefetched.get(t.id) || 0)) > 10 * 60000 &&
+    t.metrics.some(k => !k.startsWith("ibkr_")));
+  if (!due.length) return;
+  // every tab still due in one request, so their sources load side by side
+  const keys = [...new Set(due.flatMap(t => t.metrics.filter(k => !k.startsWith("ibkr_"))))];
+  let pending = 0, busy = 0;
+  try {
+    const url = `/api/metrics?prefetch=1&symbols=${encodeURIComponent(tickers.join(","))}&keys=${encodeURIComponent(keys.join(","))}`;
+    const d = await (await fetch(url, { cache: "no-store" })).json();
+    pending = d.pending; busy = d.busy || 0;
+  } catch { pending = 1; }
+  if (!pending) for (const t of due) prefetched.set(t.id, Date.now());
+  else schedulePrefetch(busy ? busy * 1000 : 2000);
 }
 
 // ---------- add / edit tab dialog ----------
@@ -1017,7 +1175,7 @@ $("metricCsvBtn").addEventListener("click", () => {
   const head = ["Ticker", ...tab.metrics.map(k => metricByKey.get(k).label)];
   const lines = tickers.map(s => [s, ...tab.metrics.map(k => {
     const m = metricByKey.get(k), c = cellInfo(s, k), v = c.value;
-    if (v == null) return c.loading ? "" : reasonOf(c.why)[1];
+    if (v == null) return c.loading ? "" : c.row ? rowMessage(metricRows.get(s)) : reasonOf(c.why).text;
     if (m.fmt === "date" || m.fmt === "date_ms") return formatMetric(m, v).text;
     if (m.fmt === "avail") return AVAIL[v];
     return v;

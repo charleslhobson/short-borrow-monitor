@@ -18,12 +18,28 @@ PROFILES = ["FULL", "THIN", "FUND", "BANK", "NOPAY", "IPO", "NOCOV", "FAIL"]
 KEYS = metrics.YAHOO_KEYS
 
 
-def fresh_service():
+def fake_symbols():
+    return common.SymbolMap(quotes=fake_yf.quotes, search=fake_yf.search)
+
+
+def fresh_service(**kw):
     fake_yf.reset()
     common.YAHOO.per_minute = 100_000
     common.YAHOO.calls.clear()
     common.YAHOO.paused_until = 0.0
-    return metrics.MetricService(fake_yf)
+    common.SYMBOLS = fake_symbols()          # the shared map, as etf.py and app.py see it
+    return metrics.MetricService(fake_yf, symbols=common.SYMBOLS, ibkr=fake_yf.ibkr_entry, **kw)
+
+
+def settle(svc, symbols, keys, tries=20, **kw):
+    """get() until nothing is loading (background checks finish between calls)."""
+    for _ in range(tries):
+        rows, pending = svc.get(symbols, keys, **kw)
+        if not pending:
+            return rows
+        import time
+        time.sleep(0.05)
+    return rows
 
 
 def daily(sym):
@@ -53,7 +69,8 @@ class AllProfiles(unittest.TestCase):
 
     def test_full_profile_comes_straight_from_yahoo(self):
         r = self.rows["FULL"]
-        self.assertEqual(len(r["data"]), len(KEYS))
+        self.assertEqual(len(r["data"]), len(KEYS) - len(metrics.FUND_ONLY))
+        self.assertEqual({k for k, v in r["why"].items()}, metrics.FUND_ONLY)      # "Only applies to funds"
         for k, v in fake_yf.FULL_INFO.items():
             if k in metrics.STRATEGIES:
                 self.assertEqual(r["data"][k], v, k)
@@ -135,8 +152,9 @@ class AllProfiles(unittest.TestCase):
         self.assertNotIn("bid", self.rows["THIN"]["data"])
         self.assertEqual(why["THIN"]["overallRisk"], "no_iss")
         self.assertEqual(why["THIN"]["sharesShort"], "no_short")
-        self.assertEqual(why["FUND"]["trailingPE"], "fund")
+        self.assertEqual(self.rows["FUND"]["src"]["trailingPE"], "fund")     # the holdings' P/E (Yahoo fund data)
         self.assertEqual(why["FUND"]["country"], "fund")
+        self.assertEqual(why["FUND"]["enterpriseValue"], "fund")
         self.assertEqual(why["FUND"]["targetMeanPrice"], "fund")
         self.assertEqual(why["BANK"]["currentRatio"], "bank")
         self.assertEqual(why["BANK"]["grossMargins"], "bank")
@@ -154,7 +172,9 @@ class AllProfiles(unittest.TestCase):
 
     def test_funds(self):
         d = self.rows["FUND"]["data"]
-        self.assertEqual((d["sector"], d["industry"]), ("Large Blend", "Example Funds"))
+        self.assertEqual((d["category"], d["fundFamily"]), ("Large Blend", "Example Funds"))
+        self.assertEqual(d["sector"], "Technology")                         # the fund's largest sector
+        self.assertEqual(self.rows["FUND"]["why"]["industry"], "fund")
         self.assertEqual(d["yield_calc"], 0.0125)                           # Yahoo's fund yield
         self.assertEqual(d["beta"], 1.0)                                    # beta3Year
 
@@ -167,8 +187,9 @@ class AllProfiles(unittest.TestCase):
         self.assertEqual(r["why"]["overallRisk"], "unreachable")
 
     def test_unknown_ticker(self):
-        rows, _ = fresh_service().get(["NOSUCH"], ["currentPrice", "sector"])
-        self.assertEqual(rows[0]["error"], "Yahoo has no data for this ticker")
+        rows = settle(fresh_service(), ["NOSUCH"], ["currentPrice", "sector"])
+        self.assertEqual(rows[0]["error"], "Not on Yahoo Finance; tried NOSUCH")
+        self.assertEqual(rows[0]["error_kind"], "listing")
 
 
 class FetchOnlyWhatsNeeded(unittest.TestCase):
@@ -193,8 +214,10 @@ class FetchOnlyWhatsNeeded(unittest.TestCase):
         svc = fresh_service()
         svc.get(["THIN"], ["trailingPE"])
         before = sum(fake_yf.CALLS.values())
-        svc.get(["THIN"], ["trailingPE", "currentRatio"])
+        svc.get(["THIN"], ["trailingPE"])
         self.assertEqual(sum(fake_yf.CALLS.values()), before)
+        svc.get(["THIN"], ["trailingPE", "currentRatio"])                  # only the balance sheet is new
+        self.assertEqual(sum(fake_yf.CALLS.values()), before + 1)
 
 
 class LimiterAndCaches(unittest.TestCase):

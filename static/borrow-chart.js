@@ -166,10 +166,12 @@
       rows = build(data);
       const shown = data.points.filter(p => p.fee != null || p.shares != null);
       if (!shown.length) {
-        const why = data.backfill && data.backfill.status === "error"
-          ? ` iBorrowDesk couldn't be reached (${data.backfill.error || "error"}).` : "";
+        const b = data.backfill || {};
+        const why = b.status === "unavailable" ? ` ${b.reason}` :
+          b.status === "error" ? " iBorrowDesk couldn't be reached for older history." : "";
         setStatus(`No borrow history for ${symbol} yet.${why}` +
           (data.recording ? " This site's hourly readings will appear here as they're recorded." : ""));
+        if (b.error) status.title = b.error;
         notes();
         return;
       }
@@ -234,9 +236,12 @@
       const parts = [];
       if (data.sources_note) parts.push(data.sources_note);
       for (const n of data.notes || []) parts.push(n);
-      if (data.backfill && data.backfill.status === "error" && data.points.length) {
-        parts.push(`iBorrowDesk couldn't be reached last time (${data.backfill.error || "error"}).`);
+      const b = data.backfill || {};
+      if (b.status === "unavailable" && data.points.length) parts.push(b.reason);
+      if (b.status === "error" && data.points.length) {
+        parts.push("iBorrowDesk couldn't be reached for older history; it'll be filled in when it can.");
       }
+      note.title = b.error || "";
       note.append(parts.join(" "));
     }
 

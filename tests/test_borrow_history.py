@@ -276,6 +276,66 @@ class ServiceTests(unittest.TestCase):
         svc.history("ZZZ", "all")
         self.assertEqual(len(fetch.calls), 2)
 
+    def test_blocked_server(self):
+        # iBorrowDesk drops the connection (how it turns away cloud servers): stop asking for a day,
+        # save nothing per ticker, and show own readings with a clear reason instead of "loading"
+        import http.client
+        store = bh.MemoryStore()
+        for h in range(5):
+            store.record_run(NOW - timedelta(hours=h), True, 0)
+        store.insert_points([("GME", NOW - timedelta(hours=4), 0.5, 3.0, 1000, bh.SRC_OWN)])
+        fetch = FakeFetch(error=http.client.RemoteDisconnected("Remote end closed connection without response"))
+        svc = service(store, fetch)
+        out = svc.history("GME", "1m")
+        self.assertNotIn("pending", out)
+        self.assertEqual(out["backfill"]["status"], "unavailable")
+        self.assertIn("turns away requests from cloud servers", out["backfill"]["reason"])
+        self.assertEqual(len(out["points"]), 1)
+        self.assertIsNone(store.backfill_get("GME"))                       # nothing saved: fills in later
+        self.assertFalse(svc.ibd_available())
+        for sym in ("AAPL", "TSLA", "GME"):                                 # no more requests today
+            self.assertEqual(svc.history(sym)["backfill"]["status"], "unavailable")
+        self.assertEqual(fetch.calls, ["GME"])
+        svc.blocked_until = 0                                               # a day later, and it's back
+        svc.fetch = FakeFetch(gme())
+        out = svc.history("GME", "all")
+        self.assertEqual(out["backfill"]["status"], "ok")
+        self.assertTrue(any(p["src"] == bh.SRC_IBD_DAILY for p in out["points"]))
+
+    def test_old_error_rows_show_as_unavailable_while_blocked(self):
+        store = bh.MemoryStore()
+        store.backfill_set("GME", NOW - timedelta(hours=3), "error: RemoteDisconnected: closed", None)
+        svc = service(store, FakeFetch(error=urllib.error.HTTPError("u", 403, "Forbidden", {}, None)))
+        out = svc.history("GME")                                            # retried (old error), refused
+        self.assertEqual(out["backfill"]["status"], "unavailable")
+        self.assertEqual(len(svc.fetch.calls), 1)
+
+    def test_what_counts_as_a_block(self):
+        import http.client
+        HE = lambda code: urllib.error.HTTPError("u", code, "x", {}, None)   # noqa: E731
+        for e in (HE(403), HE(429), http.client.RemoteDisconnected("x"), ConnectionResetError(),
+                  urllib.error.URLError(ConnectionResetError())):
+            self.assertTrue(bh.is_block(e), e)
+        for e in (HE(404), HE(500), TimeoutError(), urllib.error.URLError("no route"), ValueError("bad json")):
+            self.assertFalse(bh.is_block(e), e)
+
+    def test_missing_ticker_is_not_a_block(self):
+        svc = service(bh.MemoryStore(), FakeFetch(error=urllib.error.HTTPError("u", 404, "Not Found", {}, None)))
+        out = svc.history("ZZZZ")
+        self.assertEqual(out["backfill"]["status"], "error")
+        self.assertTrue(svc.ibd_available())
+
+    def test_turned_off(self):
+        fetch = FakeFetch(gme())
+        svc = service(bh.MemoryStore(), fetch)
+        svc.enabled = False
+        out = svc.history("GME")
+        self.assertEqual(out["backfill"], {"status": "unavailable", "reason": bh.OFF_TEXT})
+        nodb = service(None, fetch)
+        nodb.enabled = False
+        self.assertEqual(nodb.history("GME")["backfill"]["status"], "unavailable")
+        self.assertEqual(fetch.calls, [])
+
     def test_pending_while_fetching(self):
         gate = threading.Event()
 
