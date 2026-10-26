@@ -14,6 +14,7 @@ sys.path.insert(0, str(ROOT / "tests"))
 
 import etf  # noqa: E402
 from test_matching import load_foreign, load_us  # noqa: E402
+from offline import offline_ids  # noqa: E402
 
 IDX = pd.bdate_range("2019-01-02", "2026-10-21")
 MKT = np.random.default_rng(11).normal(0.0004, 0.01, len(IDX))
@@ -186,7 +187,7 @@ class ServiceTests(unittest.TestCase):
             etf.fetch_history = lambda yf, sym: hist[sym]
             etf.fetch_holdings = lambda yf, sym: hold[sym]
             etf.fetch_rfr = lambda yf: {"rate": pd.Series(4.0, index=IDX), "source": "test"}
-            svc = etf.EtfService(object(), FakeBorrow(load_us()[0]), FakeForeign(load_foreign()))
+            svc = etf.EtfService(object(), FakeBorrow(load_us()[0]), FakeForeign(load_foreign()), ids=offline_ids())
             out = svc.report(["JPN", "USA"], gc=0.25, cash=0.0, spread=1.0)
         finally:
             etf.fetch_history, etf.fetch_holdings, etf.fetch_rfr = saved

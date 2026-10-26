@@ -15,6 +15,7 @@ Settings (environment variables):
                       borrow fee history charts and Yahoo's ticker spellings; without it
                       charts use iBorrowDesk only
     STORAGE_LIMIT_MB  the database's size limit, for the "nearly full" warning (default 500)
+    OPENFIGI_API_KEY  optional free key from openfigi.com: identifies ETF holdings faster
 """
 
 import ftplib
@@ -205,6 +206,8 @@ STATIC_DIR = APP_DIR / "static"
 STATIC_TYPES = {".js": "application/javascript; charset=utf-8", ".css": "text/css; charset=utf-8"}
 
 import etf as etf_mod                      # ETF short screen (etf.py)
+import ident as ident_mod                  # identifying ETF holdings (ident.py)
+ident_mod.IDS.store = STORE                # remembers who each holding is (security_ids table)
 ETF = etf_mod.EtfService(yf, BORROW, FOREIGN) if yf is not None else None
 DEFAULT_ETFS = [s for s in (normalize(x) for x in os.environ.get(
     "DEFAULT_ETFS", "TSLL,NVDL,CONL,MSTU,SOXL").split(",")) if s]

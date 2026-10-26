@@ -69,7 +69,7 @@
       <!-- ISIN row has no fee, ticker row does -->
       <invstOrSec>
         <name>Abcd Corp</name><title>Abcd Corp</title><cusip>111111111</cusip>
-        <identifiers><isin value="US1111111116"/><ticker value="ABCE"/></identifiers>
+        <identifiers><isin value="US1111111118"/><ticker value="ABCE"/></identifiers>
         <valUSD>1500000</valUSD><pctVal>1.5</pctVal><payoffProfile>Long</payoffProfile>
         <assetCat>EC</assetCat><issuerCat>CORP</issuerCat><invCountry>US</invCountry>
       </invstOrSec>
@@ -83,7 +83,7 @@
       <!-- short stock position -->
       <invstOrSec>
         <name>Short Co Inc</name><title>Short Co Inc</title><cusip>825000100</cusip>
-        <identifiers><isin value="US8250001001"/></identifiers>
+        <identifiers><isin value="US8250001000"/></identifiers>
         <valUSD>-1000000</valUSD><pctVal>-1</pctVal><payoffProfile>Short</payoffProfile>
         <assetCat>EC</assetCat><issuerCat>CORP</issuerCat><invCountry>US</invCountry>
       </invstOrSec>

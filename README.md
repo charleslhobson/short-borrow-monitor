@@ -173,20 +173,50 @@ Paste your ETF list into the box (single stocks work too) and each one gets a ro
   break-even. Betas under 0.1 are marked "Low beta: not a SPY hedge".
   Click an ETF to see the full calculation, plus the previous (unadjusted) break-evens.
 - **Theoretical fee from holdings.** Every position's exposure (as a share of net
-  assets, not re-scaled) times its borrow fee, summed:
-  - stocks and ETFs: their IBKR fee, matched by ISIN, CUSIP, ticker, IBKR's non-US
-    country files, or a unique exact company name;
-  - swaps, futures and options: looked through to the stock or index they track, using
+  assets, not re-scaled) times its borrow fee, summed. Every position says where its
+  fee came from:
+  - US stocks: IBKR's fee for the holding's own line. IBKR's US file hides most of
+    each US ISIN (Apple is `XXXXXXX31005`) but keeps its last 5 characters, the
+    composite FIGI and every non-US ISIN, so holdings are matched by FIGI, full ISIN,
+    a ticker found from the ISIN (OpenFIGI, SEC's fails-to-deliver data, Yahoo; see
+    `ident.py`), the filing's ticker, the ISIN's last 5 characters plus a matching
+    name, or a unique company name. Names are compared without "Inc", "ADR" and the
+    like, HTML entities are decoded ("JOHNSON &amp; JOHNSON") and IBKR's old names
+    count (`RENAMES` in `etf.py`: it still calls Meta "Facebook").
+  - The holding's currency decides its market: Medtronic, Irish but held in dollars,
+    uses its US line, not IBKR's Austria file.
+  - Non-US stocks: the line in IBKR's file for their market; where IBKR has none
+    (Korea, Taiwan, India, Brazil...), the same company's IBKR US line (an ADR), its
+    listing in another country's file, or the median fee of IBKR's US lines for that
+    market's companies (`COUNTRY_LINES` in `etf.py`). Lines that aren't the holding's
+    own aren't used when they're expensive (5%+) and thin (under 100,000 shares), or cost
+    2%+ and over 4× the median of other lines for that market's companies (an unsponsored
+    ADR at 8.94% says little about borrowing the bank's shares in Singapore).
+  - Funds held by the fund: priced from their own holdings, two levels deep, else
+    from an ETF tracking the same index, and only as a last resort at their own (never
+    thin) IBKR fee. RYLD holds the Russell 2000 through RSSL, whose own IBKR fee was
+    40% on 9,000 shares; it now comes out near IWM's rate.
+  - Swaps, futures and options: looked through to the stock or index they track, using
     notional (or delta-adjusted) exposure, so a 2x single-stock ETF comes out at about
-    2 × that stock's fee. Index swaps use the components in the filing, the fund's own
-    stock holdings, or an ETF that holds the index (edit `INDEX_PROXIES` in `etf.py`);
-  - short exposure: 0%;
-  - cash, T-bills, Treasuries, money market funds and repo: the **fee for cash &
-    T-bills** setting (0% by default);
-  - bonds and anything unmatched: the **fee for unmatched holdings** setting.
+    2 × that stock's fee. When the filing names the reference "N/A" (TSLL), the swap's
+    own name and the fund's name say which stock. Index swaps use the components in the
+    filing, the fund's own stock holdings, or an ETF that holds the index (edit
+    `INDEX_PROXIES` in `etf.py`). Equity-linked notes (JEPI) are priced like their index.
+  - Stated exposure: when a fund's filing shows far less stock exposure than its name
+    promises (MSTU's swaps add up to 0.5% of a 2x fund; SDTY holds only T-bills and an
+    option with no delta), the missing exposure is added as a labelled row.
+  - Short exposure (written calls too, even when filed as rate derivatives): 0%.
+  - Cash, T-bills, Treasuries, money market funds and repo: the **fee for cash &
+    T-bills** setting (0% by default).
+  - Private shares, warrants, rights and CVRs: "not lendable", adding nothing.
+  - Bonds and holdings nothing identifies: the **fee when nothing else is known**
+    setting. Each ETF's details list them.
 
-  Click an ETF to see every position with its fee and how it was matched, or download
-  them as a CSV. `/api/etf/holdings?symbol=TSLL` returns the same list as JSON.
+  An ETF is marked "⚠ check" when one holding drives most of its estimate at a high
+  fee, when the estimate is over 3× the ETF's own IBKR fee, or when more than half of it
+  is charged the assumed rate. Click an ETF to see every position with its fee and
+  source, or download them as a CSV. `/api/etf/holdings?symbol=TSLL` returns the same
+  list as JSON.
 - **Price vs total return chart** (in each ETF's details). Two lines over the same
   dates as the table's window:
   - **Market price**: what the shares trade at (adjusted for splits only);
@@ -222,26 +252,47 @@ Variable**:
 
 Save, and the site restarts with SEC holdings turned on. N-PORT filings are
 quarterly and published up to 60 days after the quarter ends, so the "Holdings as
-of" date in each ETF's details can be a few months old.
+of" date in each ETF's details can be a few months old. SPY, DIA and MDY are unit
+trusts that don't file N-PORT: their holdings come from State Street's daily file, and
+QQQ uses QQQM's filing.
+
+Holdings IBKR's own fields can't place are looked up at OpenFIGI (free). It allows 25
+requests of 10 holdings a minute; a free key from openfigi.com raises that to 25
+requests of 100 every 6 seconds. To use one, add `OPENFIGI_API_KEY` in Render →
+Environment. With `DATABASE_URL` set, every answer is saved (the `security_ids` table)
+for 30 days, so it's looked up once.
 
 ### Other settings
 
 - `DEFAULT_ETFS`: the starting list for new visitors.
-- `GC_RATE`: the starting "fee for unmatched holdings" (default `0.25`).
+- `GC_RATE`: the starting "fee when nothing else is known" (default `0.25`).
+- `OPENFIGI_API_KEY`: optional, see above.
 - `CASH_RATE`: the starting "fee for cash & T-bills" (default `0`).
 - `RFR_SPREAD`: the starting spread below the T-bill rate for interest on short
   proceeds (default `1.0`, % per year).
 - `DATABASE_URL`, `STORAGE_LIMIT_MB`, `SHARES_CHANGE_PCT`, `IBORROWDESK`: see
   [Borrow fee history](#borrow-fee-history).
 
-### Checking the holdings match
+### Checking the theoretical fees
 
-With internet access and `SEC_USER_AGENT` set, this prints how much of each ETF's
-holdings get an IBKR fee, under the original code and the current one:
+With internet access and `SEC_USER_AGENT` set, this prices 32 ETFs (RYLD, QYLD, JEPI,
+TSLL, MSTU, SPY, IWM, EEM, KWEB, SDTY and more) with the current code, next to the live
+site's numbers, and lists what's still assumed or priced from a stand-in and why:
 
 ```
-python tools/match_report.py TSLL NVDL CONL MSTU SOXL IVV IWM EFA HYG TSLA
+python tools/theo_report.py                 # or: python tools/theo_report.py RYLD JEPI --strict
 ```
+
+It checks that RYLD lands between 0.3% and 1.5%, single-stock funds at their exposure ×
+the stock's fee, SPY / IVV / VOO (and QQQ / QQQM) within 0.05 points of each other, US
+stock funds at least 98% identified and 95% matched, and no fund with a warning. The
+**Theoretical fee check** GitHub workflow runs it every Monday (and on demand from the
+Actions tab) and fails when a check does. It needs the `SEC_USER_AGENT` repository
+secret (Settings → Secrets and variables → Actions → New repository secret, value your
+name and email); `OPENFIGI_API_KEY` there is optional.
+
+`python tools/match_report.py TSLL NVDL CONL MSTU SOXL IVV IWM EFA HYG TSLA` compares
+the share of holdings matched under the original code and the current one.
 
 ### Tests
 

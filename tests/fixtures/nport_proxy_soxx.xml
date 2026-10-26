@@ -11,7 +11,7 @@
       </invstOrSec>
       <invstOrSec>
         <name>Dupe Inc</name><title>Dupe Inc</title><cusip>222222222</cusip>
-        <identifiers><isin value="US2222222222"/></identifiers><pctVal>39.5</pctVal><payoffProfile>Long</payoffProfile>
+        <identifiers><isin value="US2222222224"/></identifiers><pctVal>39.5</pctVal><payoffProfile>Long</payoffProfile>
         <assetCat>EC</assetCat><issuerCat>CORP</issuerCat>
       </invstOrSec>
     </invstOrSecs>

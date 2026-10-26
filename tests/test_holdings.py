@@ -92,16 +92,16 @@ class PriceHoldingsTests(unittest.TestCase):
         s = self.price("nport_mixed.xml")
         rows = by_name(s)
         want = {
-            "Apple Inc": "IBKR (ISIN)",
-            "Microsoft Corp": "IBKR (CUSIP)",
+            "Apple Inc": "IBKR (ISIN suffix + name)",
+            "Microsoft Corp": "IBKR (ISIN suffix + name)",
             "Berkshire Hathaway Inc": "IBKR (ticker)",
             "Toyota Motor Corp": "IBKR (Japan file)",
             "Tencent Holdings Ltd": "IBKR (Hong Kong file)",
             "Shell PLC": "IBKR (UK file)",
             "Exxon Mobil Corporation": "IBKR (name match)",
-            "SPDR S&P 500 ETF Trust": "IBKR (ISIN)",
+            "SPDR S&P 500 ETF Trust": "IBKR fund's own fee (SPY)",
             "Abcd Corp": "IBKR (ticker)",
-            "Obscure Holdings Inc": "Assumed (unmatched)",
+            "Obscure Holdings Inc": "Assumed rate",
             "Short Co Inc": "Short exposure",
             "NVIDIA Corp Swap": "Look-through: NVDA",
             "S&P 500 Index Swap": "Look-through: S&P 500 Index",
@@ -154,7 +154,7 @@ class PriceHoldingsTests(unittest.TestCase):
     def test_index_swap_without_proxy_or_with_pending_proxy(self):
         s = self.price("nport_3x_index.xml", proxy=lambda name: None)
         swap = by_name(s)["ICE Semiconductor Index Swap"]
-        self.assertEqual((swap["how"], swap["fee"]), ("Assumed (unmatched)", GC))
+        self.assertEqual((swap["how"], swap["fee"]), ("Assumed rate", GC))
         self.assertIn("INDEX_PROXIES", swap["detail"])
         s = self.price("nport_3x_index.xml", proxy=lambda name: ("pending", "SOXX"))
         self.assertTrue(s["pending"])
@@ -183,7 +183,7 @@ class PriceHoldingsTests(unittest.TestCase):
         self.assertEqual(rows["Berkshire Hathaway"]["how"], "IBKR (ticker)")
         self.assertEqual(rows["Toyota Motor"]["how"], "IBKR (Japan file)")
         self.assertEqual(rows["US Dollar"]["how"], "Cash & T-bills")
-        self.assertEqual(rows["Everything outside the top 10"]["how"], "Assumed (unmatched)")
+        self.assertEqual(rows["Everything outside the top 10"]["how"], "Assumed rate")
         self.assertNotIn("Cash and other assets less liabilities", rows)     # only SEC filings get a residual
 
     def test_warning_when_not_from_sec(self):

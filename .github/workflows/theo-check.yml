@@ -1,0 +1,35 @@
+# Weekly check that the ETF screen's theoretical borrow fees are sane
+# (tools/theo_report.py: 32 ETFs priced live from their SEC filings and IBKR's files,
+# next to the live site's numbers). The tables land in the run's summary. Fails when
+# RYLD leaves 0.3%-1.5%, a single-stock fund strays from exposure x its stock's fee,
+# funds on the same index disagree, a US stock fund drops below 98% identified or 95%
+# matched, or any fund carries a warning.
+name: Theoretical fee check
+
+on:
+  schedule:
+    - cron: "17 8 * * 1"          # Mondays, 08:17 UTC
+  workflow_dispatch:
+
+concurrency:
+  group: theo-check
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: python tools/theo_report.py --strict --summary "$GITHUB_STEP_SUMMARY"
+        env:
+          SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
+          OPENFIGI_API_KEY: ${{ secrets.OPENFIGI_API_KEY }}

@@ -14,6 +14,7 @@ FIX = ROOT / "tests" / "fixtures"
 
 import etf  # noqa: E402
 from test_matching import load_foreign, load_us  # noqa: E402
+from offline import offline_ids  # noqa: E402
 
 
 class FakeBorrow:
@@ -58,6 +59,13 @@ HIST = {
 }
 HOLD = {"TSLL": nport("nport_2x_single.xml"), "SOXL": nport("nport_3x_index.xml"),
         "SOXX": nport("nport_proxy_soxx.xml")}
+# RYLD holds one fund, RSSL, which holds the stocks
+HOLD["RSSL"] = dict(nport("nport_proxy_soxx.xml"), series="Global X Russell 2000 ETF")
+HOLD["RYLD"] = {"source": "SEC N-PORT", "as_of": "2026-07-31", "url": None, "complete": True, "notes": [],
+                "series": "Global X Russell 2000 Covered Call ETF", "net_assets": 1e9,
+                "holdings": [{"name": "Global X Russell 2000 ETF", "title": "Global X Russell 2000 ETF", "pct": 1.0,
+                              "isin": "US37960A4537", "cusip": "37960A453", "cat": "EC", "issuer_cat": "RF",
+                              "currency": "USD", "country": "US"}]}
 
 
 class ServiceTests(unittest.TestCase):
@@ -69,7 +77,7 @@ class ServiceTests(unittest.TestCase):
         etf.fetch_rfr = lambda yf: {"rate": pd.Series(4.0, index=IDX), "source": "test"}
         table = load_us()[0]
         table["SOXL"] = {"name": "Soxl", "fee": 1.5, "rebate": 3.0, "shares": 1000, "plus": False, "isin": None}
-        cls.svc = etf.EtfService(object(), FakeBorrow(table), FakeForeign(load_foreign()))
+        cls.svc = etf.EtfService(object(), FakeBorrow(table), FakeForeign(load_foreign()), ids=offline_ids())
 
     @classmethod
     def tearDownClass(cls):
@@ -107,6 +115,19 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(len(d["rows"]), 6)
         self.assertTrue(all("how" in r and "detail" in r and "exposure" in r for r in d["rows"]))
         self.assertTrue(self.svc.holdings_detail("TSLA", 0.25)["single_stock"])
+
+    def test_fund_held_by_a_fund(self):
+        d = self.svc.holdings_detail("RYLD", gc=0.25, cash=0.0)
+        row = d["rows"][0]
+        rssl = etf.price_holdings(HOLD["RSSL"], self.svc.match_index(load_us()[0]), 0.25, 0.0)["fee"]
+        self.assertEqual(row["how"], "Look-through: RSSL's holdings")
+        self.assertAlmostEqual(d["theo"]["fee"], rssl)
+        self.assertLess(d["theo"]["fee"], 5)                      # not RSSL's own 40% fee
+        self.assertEqual(d["theo"]["warnings"], [])
+        # the Stocks page's look-through goes through RSSL to its stocks
+        w = dict(self.svc.lookthrough_weights("RYLD")["weights"])
+        self.assertEqual(set(w), {"NVDA", "DUPE"})
+        self.assertAlmostEqual(w["NVDA"], 0.60 / 0.995, places=6)
 
     def test_no_start_means_no_custom_window(self):
         out = self.svc.report(["TSLL"], gc=0.25)
