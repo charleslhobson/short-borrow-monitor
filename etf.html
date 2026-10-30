@@ -276,7 +276,7 @@
       <input id="startDate" type="date" min="1993-01-29">
     </label>
     <span class="date-error" id="dateError" role="alert"></span>
-    <label for="gc">Fee for unmatched holdings
+    <label for="gc" title="Only for holdings nothing else identifies; each ETF's details show how much of it this applies to">Fee when nothing else is known
       <input id="gc" type="number" min="0" max="100" step="0.05" inputmode="decimal"> % / yr
     </label>
     <label for="spread">Interest on short proceeds: T-bill rate minus
@@ -340,15 +340,20 @@
     <p><strong>Verdict.</strong> Worthwhile: the quoted fee is at or below the beta-adjusted break-even. Profits, costlier hedge than SPY: below the short-profits break-even only. Not worthwhile: above both. Betas under 0.1 (or no beta) aren't treated as a SPY hedge. Each ETF's details also show the previous, unadjusted break-evens, which charge borrow daily on the short's current value (360-day year): short profits <code>−R ÷ A</code>, short beats owning SPY <code>(−R − R_SPY) ÷ A</code> and short ETF / long SPY <code>(R_SPY − R) ÷ A</code>, where <code>A</code> is the sum of the short's value relative to its start × days ÷ 360. Margin costs, recalls and fee changes are left out.</p>
     <p><strong>Theoretical fee.</strong> Every position in the ETF's latest holdings report, weighted by its exposure as a share of net assets (not re-scaled to 100%), times its borrow fee, summed:</p>
     <ul>
-      <li><strong>Stocks and ETFs:</strong> the IBKR fee, matched by ISIN, CUSIP, ticker, IBKR's non-US country files, or as a last resort a unique exact company-name match.</li>
-      <li><strong>Swaps and futures:</strong> exposure is the notional amount ÷ net assets, at the fee of the stock they track. Index swaps use the components listed in the filing, else the fund's own stock holdings as a stand-in for the index, else an ETF that holds the index (for example SOXX for semiconductors). Options use delta-adjusted exposure. So a 2x single-stock ETF comes out at about 2 × that stock's fee.</li>
+      <li><strong>Stocks:</strong> IBKR's fee for the holding's own line. IBKR's US file hides most of each US ISIN (Apple shows as XXXXXXX31005), so US holdings are matched by, in order: Bloomberg FIGI, full ISIN (non-US companies), a ticker found from the ISIN at OpenFIGI, SEC's fails-to-deliver data or Yahoo, the filing's ticker, the last 5 characters of the ISIN plus a matching company name, and as a last resort a unique company name. Names are compared without "Inc", "ADR" and the like, and IBKR's old names count (it still calls Meta "Facebook"). The holding's currency decides its market, so Medtronic, Irish but held in dollars, uses its US line rather than IBKR's Austria file.</li>
+      <li><strong>Non-US stocks:</strong> the line in IBKR's file for the holding's market. Where IBKR has no file (Korea, Taiwan, India, Brazil and others), the same company's IBKR US line (an ADR such as TSM) is used, then its listing in another country's file, then the median fee of IBKR's US lines for that market's companies, labelled "Country median". A line that isn't the holding's own isn't used when it's expensive (5% a year or more) and thin (under 100,000 shares), or costs 2% or more and over 4× the median of other lines for that market's companies.</li>
+      <li><strong>Funds held by the fund</strong> are priced from their own holdings (two levels deep), or from an ETF tracking the same index when those can't be loaded; their own IBKR fee only as a last resort, and never a thin one. So RYLD, which holds the Russell 2000 through RSSL, comes out near IWM's rate, not RSSL's thinly traded 40%.</li>
+      <li><strong>Swaps and futures:</strong> exposure is the notional amount ÷ net assets, at the fee of the stock they track (from the filing's reference, or the swap's own name and the fund's name when the filing leaves it blank). Index swaps use the components listed in the filing, else the fund's own stock holdings as a stand-in for the index, else an ETF that holds the index (for example SOXX for semiconductors). Options use delta-adjusted exposure. So a 2x single-stock ETF comes out at about 2 × that stock's fee. Equity-linked notes (JEPI, JEPQ) are priced like the index they pay.</li>
+      <li><strong>Stated exposure:</strong> when the filing shows far less stock exposure than the fund's name promises (swaps reported at a fraction of their size, or a fund holding only T-bills and options), the missing exposure is added as a labelled row at the fee of the stock or index the fund tracks.</li>
       <li><strong>Short exposure</strong> (inverse funds, written calls) needs no borrow: 0%.</li>
       <li><strong>Cash, T-bills, Treasuries, money market funds and repo</strong> aren't borrowed to replicate the fund: they're charged the "fee for cash &amp; T-bills" above (0% by default).</li>
-      <li><strong>Bonds and anything unmatched</strong> are charged the "fee for unmatched holdings" above. Rate, currency, credit and commodity derivatives count as 0%.</li>
+      <li><strong>Not lendable:</strong> private shares, warrants, rights and CVRs can't be borrowed; they're shown but add nothing and don't count against coverage.</li>
+      <li><strong>Bonds, and holdings nothing identifies,</strong> are charged the "fee when nothing else is known" above; each ETF's details list them and how much of the fund they are. Rate, currency, credit and commodity derivatives count as 0%.</li>
     </ul>
+    <p>An ETF is marked "⚠ check" when one holding drives most of its estimate at a high fee, when the estimate is more than 3× the ETF's own IBKR fee, or when less than half of it matched an IBKR fee.</p>
     <p>Click an ETF to see every position, its fee and how it was matched, or download them as a CSV.</p>
     <p><strong>Charts.</strong> Each ETF's details show <strong>price vs total return</strong> over the same dates as the table: the market price (adjusted for splits only) and the value of one share bought at the start with every distribution reinvested (Yahoo's adjusted close, the series behind the returns above), both starting at the same price. The gap between them is what the distributions added, and it's why a fund's price can fall while its total return rises: each payout, including return of capital, lowers the price by about the amount paid, and a short owes every one. The <strong>borrow fee history</strong> chart shows IBKR's fee and shares available over time: this site's own hourly readings of IBKR's file, and older history from iBorrowDesk.</p>
-    <p><strong>Sources.</strong> Quoted fees, rebates and availability: Interactive Brokers' public stock loan files, refreshed about every 15 minutes. Prices, history and the T-bill yield: Yahoo Finance (FRED as a fallback for the yield). Older borrow fee history: iBorrowDesk. Holdings: the ETF's latest SEC N-PORT filing (complete, but filed quarterly and published up to 60 days later), or Yahoo's top 10 holdings when no filing is found. For information only, not investment advice.</p>
+    <p><strong>Sources.</strong> Quoted fees, rebates and availability: Interactive Brokers' public stock loan files, refreshed about every 15 minutes. Prices, history and the T-bill yield: Yahoo Finance (FRED as a fallback for the yield). Older borrow fee history: iBorrowDesk. Holdings: the ETF's latest SEC N-PORT filing (complete, but filed quarterly and published up to 60 days later); State Street's daily file for SPY, DIA and MDY, which as unit trusts don't file N-PORT, and QQQM's filing for QQQ; or Yahoo's top 10 holdings when nothing else is found. Identifiers: OpenFIGI, SEC's fails-to-deliver data and Yahoo. For information only, not investment advice.</p>
   </section>
 </div>
 
@@ -528,8 +533,11 @@ function render() {
       else if (hd.error) { th.textContent = dash; th.className = "dim"; th.title = hd.error; }
       else {
         th.textContent = pctp(v.theo);
+        const tw = (hd.theo && hd.theo.warnings) || [];
         if (hd.warning) { th.append(el("span", "warnline", "⚠ Top 10 only")); th.title = hd.warning; }
+        else if (tw.length) { th.append(el("span", "warnline", "⚠ check")); th.title = tw.join("\n"); }
         else if (hd.theo && hd.theo.pending) { th.append(el("span", "cellsub", "proxy loading")); }
+        else if (hd.theo && hd.theo.identifying) { th.append(el("span", "cellsub", `identifying ${hd.theo.identifying}`)); }
       }
 
       const mis = tr.insertCell();
@@ -766,6 +774,8 @@ function holdingsSection(v) {
   const t = (fd && fd.theo) || hd.theo;
 
   if (hd.warning) g.append(el("p", "warnbox", `⚠ ${hd.warning}`));
+  for (const w of (t && t.warnings) || []) g.append(el("p", "warnbox", `⚠ ${w}`));
+  if (t && t.identifying) g.append(el("p", "note-line", `Identifying ${t.identifying} holding${t.identifying > 1 ? "s" : ""} from OpenFIGI, SEC and Yahoo…`));
   const dl = el("dl", "kv");
   const src = el("span");
   if (hd.url) { const a = el("a", null, hd.source); a.href = hd.url; a.target = "_blank"; a.rel = "noopener"; a.style.color = "inherit"; src.append(a); }
@@ -780,7 +790,9 @@ function holdingsSection(v) {
     kv(dl, "Matched to an IBKR fee", isNum(t.coverage)
       ? `${t.matched} of ${t.need_count} positions (${(t.coverage * 100).toFixed(1)}% of non-cash weight)` : dash);
     kv(dl, "Cash & T-bills", pctf(t.cash_weight, 1));
-    kv(dl, "Charged an assumed rate", pctf(t.assumed_weight, 1));
+    if (t.proxy_weight) kv(dl, "Priced from a stand-in", pctf(t.proxy_weight, 1));
+    kv(dl, "Charged the assumed rate", `${pctf(t.assumed_weight, 1)} (at ${pctp(gc)})`);
+    if (t.notlendable_weight) kv(dl, "Not lendable", pctf(t.notlendable_weight, 1));
   }
   g.append(dl);
 
@@ -813,13 +825,17 @@ function holdingsSection(v) {
       row.insertCell().textContent = x.type;
       row.insertCell().textContent = pctf(x.exposure, 2);
       const f = row.insertCell();
-      f.textContent = !isNum(x.fee) ? dash : x.assumed ? `${pctp(x.fee)} assumed` : pctp(x.fee);
-      if (x.assumed || !isNum(x.fee)) f.className = "dim";
+      f.textContent = !isNum(x.fee) ? dash
+        : x.group === "notlendable" ? "not lendable"
+        : x.group === "proxy" ? `${pctp(x.fee)} stand-in`
+        : x.assumed && x.group === "unmatched" && x.fee === 0 ? "0.00% assumed (your setting)"
+        : x.assumed && x.group !== "lookthrough" ? `${pctp(x.fee)} assumed` : pctp(x.fee);
+      if ((x.assumed && x.group !== "lookthrough") || x.group === "proxy" || x.group === "notlendable" || !isNum(x.fee)) f.className = "dim";
       const how = row.insertCell(); how.className = "how";
       how.append(document.createTextNode(x.how));
       if (x.detail) {
         how.title = x.detail;
-        if (!["IBKR (ISIN)", "IBKR (CUSIP)", "IBKR (ticker)", "Cash & T-bills"].includes(x.how)) how.append(el("span", "cellsub", x.detail));
+        if (!["IBKR (ISIN)", "IBKR (ISIN suffix + name)", "IBKR (FIGI via OpenFIGI)", "IBKR (ticker)", "Cash & T-bills"].includes(x.how)) how.append(el("span", "cellsub", x.detail));
       }
       row.insertCell().textContent = pctp(x.contrib, 3);
     }
@@ -846,8 +862,11 @@ function holdingsSection(v) {
     const names = t.unmatched.map(u => `${u.name} (${pctf(u.weight, 2)})`).join(", ");
     g.append(el("p", "note-line", `Charged the assumed rate: ${names}.`));
   }
+  if (t && t.proxied && t.proxied.length) {
+    const names = t.proxied.map(u => `${u.name} (${pctf(u.weight, 2)}, ${u.how})`).join(", ");
+    g.append(el("p", "note-line", `Priced from a stand-in: ${names}.`));
+  }
   for (const n of hd.notes || []) g.append(el("p", "note-line", n));
-  if (t && isNum(t.coverage) && t.coverage < 0.5) g.append(el("p", "note-line", "Less than half of the non-cash exposure matched an IBKR fee, so the assumed rate drives this estimate."));
   return g;
 }
 
@@ -864,10 +883,10 @@ async function downloadHoldings(sym) {
   const e = await loadHoldings(sym);
   if (!e || e.state !== "ok" || !e.data.rows) { alert(e && e.error ? e.error : "Holdings aren't loaded yet. Try again in a moment."); return; }
   const lines = [csvLine(["Holding", "Ticker", "ISIN", "CUSIP", "Type", "Asset category", "Issuer category",
-    "Exposure (% of net assets)", "Borrow fee %/yr", "Fee assumed", "How matched", "Adds %/yr", "Detail"])];
+    "Exposure (% of net assets)", "Borrow fee %/yr", "Fee assumed", "Group", "Source", "How matched", "Adds %/yr", "Detail"])];
   for (const x of e.data.rows) {
     lines.push(csvLine([x.name, x.ticker, x.isin, x.cusip, x.type, x.cat, x.issuer_cat, isNum(x.exposure) ? x.exposure * 100 : null,
-      x.fee, x.assumed ? "yes" : "no", x.how, x.contrib, x.detail]));
+      x.fee, x.assumed ? "yes" : "no", x.group, x.source, x.how, x.contrib, x.detail]));
   }
   saveCsv(lines, `${sym}-holdings-${e.data.as_of || today()}.csv`);
 }
@@ -982,7 +1001,7 @@ $("csvBtn").addEventListener("click", () => {
   const head = ["ETF", "Name", "AUM", "Price", "Price source", "Quoted fee %/yr", "Shares available",
     "Value available ($, price x shares)", "Theoretical fee %/yr",
     "Quoted minus theoretical (pts)", "Holdings source", "Holdings as of", "Holdings matched (% of non-cash weight)",
-    "Gross long stock exposure", "Cash & T-bills weight", "Assumed-rate weight",
+    "Gross long stock exposure", "Cash & T-bills weight", "Assumed-rate weight", "Stand-in weight", "Not lendable weight", "Theoretical fee warnings",
     "Window", "Requested start", "Start", "End", "Started at inception instead", "ETF total return", "SPY total return",
     "ETF return /yr", "SPY return /yr", "T-bill rate /yr", "Spread %/yr", "Cash rate /yr", "Cash rate total",
     "Days cash earned 0%", "Beta (this window)", "Beta (window) frequency", "Beta (window) returns",
@@ -1000,6 +1019,7 @@ $("csvBtn").addEventListener("click", () => {
     lines.push(csvLine([v.symbol, v.name, v.aum, v.price, v.r && v.r.price_src === "close" ? `last close ${v.r.last_date}` : (v.r && v.r.price_src) || "",
       v.fee, v.shares, v.avail_value, v.theo, v.mis, hd.source, hd.as_of,
       isNum(t.coverage) ? t.coverage * 100 : null, t.gross_long_equity, t.cash_weight, t.assumed_weight,
+      t.proxy_weight, t.notlendable_weight, (t.warnings || []).join(" | "),
       win === "custom" ? `custom from ${customStart}` : win, w.requested_start, w.start, w.end, w.clamped ? "yes" : "",
       w.etf_total, w.spy_total, w.etf_ann, w.spy_ann, w.tbill_ann, w.spread, w.rfr_ann, w.rfr_total, w.floor_days,
       b.beta, b.freq, b.days, b.corr, b.fallback ? "yes" : "", b1.beta, b1.freq, b1.days, b1.corr,

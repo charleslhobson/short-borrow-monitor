@@ -17,6 +17,7 @@ import fake_yf  # noqa: E402
 import finra  # noqa: E402
 import metrics  # noqa: E402
 from test_metrics import fresh_service, settle  # noqa: E402
+from offline import offline_ids  # noqa: E402
 
 HEAD = ('"accountingYearMonthNumber"|"symbolCode"|"issueName"|"issuerServicesGroupExchangeCode"|"marketClassCode"|'
         '"currentShortPositionQuantity"|"previousShortPositionQuantity"|"stockSplitFlag"|"averageDailyVolumeQuantity"|'
@@ -400,7 +401,7 @@ class EtfLookThroughWeights(unittest.TestCase):
             def snapshot(self):
                 return ({"AAA": {"fee": 0.3, "shares": 1000, "name": "Aaa Corp"},
                          "BBB": {"fee": 0.5, "shares": 1000, "name": "Bbb Corp"}}, [], "", "", False)
-        svc = etf.EtfService(None, Borrow())
+        svc = etf.EtfService(None, Borrow(), ids=offline_ids())
         hold = {"source": "Yahoo top 10", "as_of": None, "complete": False, "net_assets": None,
                 "holdings": [{"name": "Aaa Corp", "ticker": "AAA", "pct": 0.3, "yahoo": True},
                              {"name": "Bbb Corp", "ticker": "BBB", "pct": 0.2, "yahoo": True},

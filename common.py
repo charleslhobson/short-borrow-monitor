@@ -13,6 +13,7 @@ Shared helpers
 """
 
 import ftplib
+import html
 import io
 import os
 import re
@@ -170,6 +171,13 @@ def borrow_rank(entry):
 
 
 def parse_borrow_text(text):
+    """IBKR's stock loan file -> ({ticker: row}, "as of" text).
+
+    Each row: name (HTML entities like "&amp;" decoded), fee, rebate, shares, plus,
+    isin (only when IBKR gives it in full: it masks US ISINs as "XXXXXXX31005"),
+    isin_tail (the last 5 characters, which IBKR keeps even when masked: the last 4 of
+    the CUSIP and the check digit), figi (Bloomberg's composite FIGI) and con (IBKR's
+    contract id)."""
     table, header, as_of = {}, None, ""
     for line in text.splitlines():
         if line.startswith("#BOF"):
@@ -185,13 +193,17 @@ def parse_borrow_text(text):
                 continue
             raw = row.get("AVAILABLE", "")
             digits = raw.replace(">", "").replace(",", "").strip()
+            isin = row.get("ISIN", "").strip().upper()
             entry = {
-                "name": row.get("NAME", "").title(),
+                "name": html.unescape(row.get("NAME", "")).strip().title(),
                 "fee": to_float(row.get("FEERATE")),
                 "rebate": to_float(row.get("REBATERATE")),
                 "shares": int(digits) if digits.isdigit() else None,
                 "plus": raw.startswith(">"),
-                "isin": row.get("ISIN", "").upper() or None,
+                "isin": None if not isin or isin.startswith("XX") else isin,
+                "isin_tail": isin[-5:] if len(isin) == 12 else None,
+                "figi": row.get("FIGI", "").strip().upper() or None,
+                "con": row.get("CON", "").strip() or None,
             }
             old = table.get(sym)
             if old is None or borrow_rank(entry) > borrow_rank(old):
@@ -283,6 +295,32 @@ def ibkr_symbol(text, known=None):
             if c in known:
                 return c
     return cands[0]
+
+
+def clean_cusip(cusip):
+    """A 9-character CUSIP (or foreign CINS), or None for blanks, 'N/A' and all-zero codes."""
+    s = (cusip or "").strip().upper()
+    if not re.fullmatch(r"[0-9A-Z*@#]{8}[0-9]", s) or s.startswith("000000"):
+        return None
+    return s
+
+
+def cusip_to_isin(cusip):
+    """US ISIN = 'US' + CUSIP + check digit. Foreign CINS codes (first character a letter) give None."""
+    c = clean_cusip(cusip)
+    if not c or not c[0].isdigit() or not c.isalnum():
+        return None
+    base = "US" + c
+    digits = "".join(str(int(ch, 36)) for ch in base)
+    total = 0
+    for i, d in enumerate(reversed(digits)):
+        n = int(d)
+        if i % 2 == 0:
+            n *= 2
+            if n > 9:
+                n -= 9
+        total += n
+    return base + str((10 - total % 10) % 10)
 
 
 def full_isin(isin):

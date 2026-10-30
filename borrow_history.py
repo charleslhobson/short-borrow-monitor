@@ -152,6 +152,7 @@ class MemoryStore:
         self.fills = {}             # symbol -> {"fetched_at", "status", "first_date"}
         self.run_rows = {}          # ts -> (ok, rows, note)
         self.symbols = {}           # ibkr -> (yahoo, how, checked_at): Yahoo ticker spellings
+        self.ids = {}               # "ISIN:..." -> (ticker, figi, name, src, checked_at): ident.Identifier
 
     def setup(self):
         pass
@@ -164,6 +165,15 @@ class MemoryStore:
         with self.lock:
             for ibkr, yahoo, how, checked in rows:
                 self.symbols[ibkr] = (yahoo, how, checked)
+
+    def ids_get(self, keys):
+        with self.lock:
+            return {k: self.ids[k] for k in keys if k in self.ids}
+
+    def ids_put(self, rows):
+        with self.lock:
+            for key, ticker, figi, name, src, checked in rows:
+                self.ids[key] = (ticker, figi, name, src, checked)
 
     def latest(self):
         with self.lock:
@@ -252,6 +262,10 @@ SCHEMA = [
     # Yahoo's spelling of IBKR tickers (common.SymbolMap); yahoo is NULL when Yahoo doesn't carry it
     """CREATE TABLE IF NOT EXISTS yahoo_symbols (
          ibkr text PRIMARY KEY, yahoo text, how text, checked_at timestamptz)""",
+    # Who an ETF holding is (ident.Identifier): key is "ISIN:..." or "CUSIP:..."; src says
+    # where the answer came from (openfigi, sec_ftd, yahoo) or "none" when nothing was found
+    """CREATE TABLE IF NOT EXISTS security_ids (
+         key text PRIMARY KEY, ticker text, figi text, name text, src text, checked_at timestamptz)""",
 ]
 
 
@@ -311,6 +325,20 @@ class PgStore:
                 """INSERT INTO yahoo_symbols (ibkr, yahoo, how, checked_at) VALUES (%s, %s, %s, %s)
                    ON CONFLICT (ibkr) DO UPDATE SET yahoo = EXCLUDED.yahoo, how = EXCLUDED.how,
                    checked_at = EXCLUDED.checked_at""", rows))
+
+    def ids_get(self, keys):
+        def q(cur):
+            cur.execute("SELECT key, ticker, figi, name, src, checked_at FROM security_ids WHERE key = ANY(%s)",
+                        (list(keys),))
+            return {r[0]: tuple(r[1:]) for r in cur.fetchall()}
+        return self._do(q) if keys else {}
+
+    def ids_put(self, rows):
+        if rows:
+            self._do(lambda cur: cur.executemany(
+                """INSERT INTO security_ids (key, ticker, figi, name, src, checked_at) VALUES (%s, %s, %s, %s, %s, %s)
+                   ON CONFLICT (key) DO UPDATE SET ticker = EXCLUDED.ticker, figi = EXCLUDED.figi,
+                   name = EXCLUDED.name, src = EXCLUDED.src, checked_at = EXCLUDED.checked_at""", rows))
 
     def latest(self):
         def q(cur):
